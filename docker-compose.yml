@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  ai-service:
+    build: .
+    container_name: kanzlei-ai-service
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+    networks:
+      - kanzlei-network
+
+networks:
+  kanzlei-network:
+    external: true
