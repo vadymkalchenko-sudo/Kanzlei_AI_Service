@@ -9,8 +9,11 @@ services:
     env_file:
       - .env
     volumes:
+      - ./app:/app/app
       - ./logs:/app/logs
       - ./uploads:/app/uploads
+    # Override command for development to enable reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
     restart: unless-stopped
     networks:
       - kanzlei-network
