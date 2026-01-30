@@ -61,28 +61,33 @@ class AIExtractor:
         else:
             logger.warning("Gemini API Key not set in settings!")
 
-    async def extract_case_data(self, text: str) -> CaseData:
-        """Extracts structured case data from text using LLM"""
+    async def extract_case_data(self, text: str, attachments: list = None) -> CaseData:
+        """
+        Extracts structured case data from text and attachments using LLM.
+        attachments: List of dicts {'mime_type': str, 'data': bytes}
+        """
         # Lazy config check
         if not self.model:
             logger.info("Model not ready, trying to configure again...")
             self.configure_genai()
 
         if not self.model:
-            # Fallback for testing/dev without key
             logger.warning("No AI model configured (still None after retry), returning empty structure")
             return CaseData()
 
-        prompt = f"""
-        Du bist ein juristischer Assistent. Analysiere die folgende E-Mail (inklusive Header, Signatur, Footer) und extrahiere strukturierte Daten für eine neue Verkehrsrecht-Akte.
+        prompt_text = f"""
+        Du bist ein juristischer Assistent. Analysiere die folgende E-Mail (inklusive Header, Signatur, Footer) UND die angehängten Bilder/Dokumente (z.B. Fahrzeugscheine, Unfallskizzen).
+        Extrahiere strukturierte Daten für eine neue Verkehrsrecht-Akte.
         
-        WICHTIG: Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten, auch in der Signatur ("Mit freundlichen Grüßen...") oder im unteren Teil der E-Mail.
-        WICHTIG: Suche nach Unfalldaten (Datum, Ort, Kennzeichen) im gesamten Text.
+        WICHTIG: 
+        1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten (auch in Signaturen).
+        2. Fahrzeuschein-Analyse: Wenn ein Fahrzeugschein als Bild dabei ist, extrahiere Kennzeichen, Fahrzeughalter (Name/Adresse) und VIN.
+        3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen) im gesamten Input.
         
-        Text:
+        E-Mail Text:
         {text[:15000]}
         
-        Antworte NUR mit validem JSON (ohne Markdown-Formatierung wie ```json), das genau diesem Schema entspricht:
+        Antworte NUR mit validem JSON (ohne Markdown), das genau diesem Schema entspricht:
         {{
             "mandant": {{
                 "vorname": "Vorname (falls nicht gefunden, leer lassen)", 
@@ -101,7 +106,7 @@ class AIExtractor:
                 "datum": "YYYY-MM-DD", 
                 "ort": "Unfallort",
                 "kennzeichen_gegner": "XX-XX-1234", 
-                "kennzeichen_mandant": "XX-YY-5678"
+                "kennzeichen_mandant": "XX-YY-5678 (ggf. aus Fahrzeugschein)"
             }},
             "betreff": "Kurzer Betreff für Akte (z.B. Unfall vom ...)",
             "zusammenfassung": "Kurze inhaltliche Zusammenfassung",
@@ -109,8 +114,21 @@ class AIExtractor:
         }}
         """
 
+        # Prepare multimodal content parts
+        content_parts = [prompt_text]
+        
+        if attachments:
+            for att in attachments:
+                # Gemini expects dict with 'mime_type' and 'data' keys for blob
+                # We assume att is already {'mime_type': ..., 'data': ...}
+                content_parts.append({
+                    "mime_type": att['mime_type'],
+                    "data": att['data']
+                })
+                logger.info(f"Added attachment to AI context: {att.get('mime_type')}")
+
         try:
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(content_parts)
             json_str = response.text.strip()
             
             # Clean up potential markdown formatting ```json ... ```

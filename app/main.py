@@ -71,12 +71,40 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         logger.info(f"Job {job_id}: Extracted email subject '{email_content.subject}'")
 
         # 2. Extract Data with AI
-        # ... (rest remains same, but we need to update usage of email_file later)
+        # Gather attachments for multimodal analysis
+        ai_attachments = []
+        supported_types = ["image/jpeg", "image/png", "image/webp", "application/pdf"]
+        
+        for att in email_content.attachments:
+            # Simple mime type check - can be improved
+            is_supported = False
+            mime = "application/octet-stream" 
+            
+            if att.filename.lower().endswith(('.jpg', '.jpeg')):
+                mime = "image/jpeg"
+                is_supported = True
+            elif att.filename.lower().endswith('.png'):
+                mime = "image/png"
+                is_supported = True
+            elif att.filename.lower().endswith('.webp'):
+                mime = "image/webp"
+                is_supported = True
+            elif att.filename.lower().endswith('.pdf'):
+                mime = "application/pdf"
+                is_supported = True
+                
+            if is_supported:
+                ai_attachments.append({
+                    "mime_type": mime,
+                    "data": att.content
+                })
         
         # Combine subject + body
         full_text = f"Betreff: {email_content.subject}\n\n{email_content.body}"
-        case_data = await ai_extractor.extract_case_data(full_text)
-        logger.info(f"Job {job_id}: AI Extraction complete")
+        
+        # Call AI with text AND images
+        case_data = await ai_extractor.extract_case_data(full_text, attachments=ai_attachments)
+        logger.info(f"Job {job_id}: AI Extraction complete (with {len(ai_attachments)} attachments)")
 
         # ... (Mappings remain same) ...
 
