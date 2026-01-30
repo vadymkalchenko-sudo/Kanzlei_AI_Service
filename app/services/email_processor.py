@@ -50,8 +50,7 @@ class EmailProcessor:
         # Extract Attachments
         email_data.attachments = self._get_attachments(msg)
         
-        # Reset file pointer
-        await file.seek(0)
+
         
         return email_data
 
