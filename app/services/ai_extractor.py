@@ -51,16 +51,26 @@ class AIExtractor:
 
     def configure_genai(self):
         if settings.gemini_api_key:
-            genai.configure(api_key=settings.gemini_api_key)
-            self.model = genai.GenerativeModel(settings.gemini_model)
+            try:
+                logger.info(f"Configuring Gemini with key length: {len(settings.gemini_api_key)}")
+                genai.configure(api_key=settings.gemini_api_key)
+                self.model = genai.GenerativeModel(settings.gemini_model)
+                logger.info(f"Gemini Model '{settings.gemini_model}' configured successfully")
+            except Exception as e:
+                logger.error(f"Failed to configure Gemini: {str(e)}")
         else:
-            logger.warning("Gemini API Key not set!")
+            logger.warning("Gemini API Key not set in settings!")
 
     async def extract_case_data(self, text: str) -> CaseData:
         """Extracts structured case data from text using LLM"""
+        # Lazy config check
+        if not self.model:
+            logger.info("Model not ready, trying to configure again...")
+            self.configure_genai()
+
         if not self.model:
             # Fallback for testing/dev without key
-            logger.warning("No AI model configured, returning empty structure")
+            logger.warning("No AI model configured (still None after retry), returning empty structure")
             return CaseData()
 
         prompt = f"""
