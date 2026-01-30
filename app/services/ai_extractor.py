@@ -74,35 +74,38 @@ class AIExtractor:
             return CaseData()
 
         prompt = f"""
-        Du bist ein juristischer Assistent. Analysiere die folgende E-Mail/Dokument und extrahiere strukturierte Daten für eine neue Verkehrsrecht-Akte.
+        Du bist ein juristischer Assistent. Analysiere die folgende E-Mail (inklusive Header, Signatur, Footer) und extrahiere strukturierte Daten für eine neue Verkehrsrecht-Akte.
         
-        Bitte extrahiere folgende Informationen:
-        1. Mandant (Name, Adresse, Kontakt)
-        2. Gegnerische Versicherung (Name, Schadennummer)
-        3. Unfall (Datum, Ort, Kennzeichen)
-        4. Betreff/Zusammenfassung
-
+        WICHTIG: Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten, auch in der Signatur ("Mit freundlichen Grüßen...") oder im unteren Teil der E-Mail.
+        WICHTIG: Suche nach Unfalldaten (Datum, Ort, Kennzeichen) im gesamten Text.
+        
         Text:
-        {text[:10000]}  # Limit token usage
+        {text[:15000]}
         
-        Antworte NUR mit validem JSON, das genau diesem Schema entspricht:
+        Antworte NUR mit validem JSON (ohne Markdown-Formatierung wie ```json), das genau diesem Schema entspricht:
         {{
             "mandant": {{
-                "vorname": "", "nachname": "", "anrede": "Herr/Frau",
+                "vorname": "Vorname (falls nicht gefunden, leer lassen)", 
+                "nachname": "Nachname", 
+                "anrede": "Herr/Frau",
                 "adresse": {{ "strasse": "", "plz": "", "ort": "" }},
-                "email": "", "telefon": ""
+                "email": "Email des Absenders/Mandanten", 
+                "telefon": "Telefonnummer aus Signatur/Text"
             }},
             "gegner_versicherung": {{
-                "name": "", "schadennummer": "",
+                "name": "Name der Versicherung", 
+                "schadennummer": "Schadennummer/Aktenzeichen d. Versicherung",
                  "adresse": {{ "strasse": "", "plz": "", "ort": "" }}
             }},
             "unfall": {{
-                "datum": "YYYY-MM-DD", "ort": "",
-                "kennzeichen_gegner": "", "kennzeichen_mandant": ""
+                "datum": "YYYY-MM-DD", 
+                "ort": "Unfallort",
+                "kennzeichen_gegner": "XX-XX-1234", 
+                "kennzeichen_mandant": "XX-YY-5678"
             }},
-            "betreff": "Kurzer Betreff für Akte",
-            "zusammenfassung": "Kurze Zusammenfassung des Inhalts",
-            "handlungsbedarf": "Was muss getan werden?"
+            "betreff": "Kurzer Betreff für Akte (z.B. Unfall vom ...)",
+            "zusammenfassung": "Kurze inhaltliche Zusammenfassung",
+            "handlungsbedarf": "Was muss getan werden? (z.B. Anspruchsschreiben erstellen)"
         }}
         """
 

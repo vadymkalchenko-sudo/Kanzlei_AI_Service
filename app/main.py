@@ -116,14 +116,15 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         akte_payload = {
             "mandant": mandant_id,
             "gegner": gegner_id,
-            "info_zusatz": (
-                f"Betreff: {case_data.betreff}\n"
-                f"Unfalldatum: {case_data.unfall.datum}\n"
-                f"Unfallort: {case_data.unfall.ort}\n"
-                f"Kennzeichen Gegner: {case_data.unfall.kennzeichen_gegner}\n"
-                f"Kennzeichen Mandant: {case_data.unfall.kennzeichen_mandant}\n"
-                f"Zusammenfassung: {case_data.zusammenfassung}"
-            ),
+            "info_zusatz": {
+                "betreff": case_data.betreff,
+                "unfalldatum": case_data.unfall.datum,
+                "unfallort": case_data.unfall.ort,
+                "kennzeichen_gegner": case_data.unfall.kennzeichen_gegner,
+                "kennzeichen_mandant": case_data.unfall.kennzeichen_mandant,
+                "versicherungsnummer": case_data.gegner_versicherung.schadennummer,
+                "zusammenfassung": case_data.zusammenfassung
+            },
             "fragebogen_data": case_data.dict() # Store raw AI data
         }
         akte_resp = await django_client.create_akte(akte_payload)
