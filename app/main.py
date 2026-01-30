@@ -132,12 +132,22 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
 
         # 6. Upload Original Email
         # Use the bytes we read earlier
-        await django_client.upload_dokument(akte_id, email_content_bytes, filename or "email.eml")
+        await django_client.upload_dokument(
+            akte_id=akte_id, 
+            file_content=email_content_bytes, 
+            filename=filename or "email.eml",
+            titel="Original E-Mail"
+        )
         logger.info(f"Job {job_id}: Uploaded email file")
         
         # 7. Upload Attachments
         for att in email_content.attachments:
-            await django_client.upload_dokument(akte_id, att.content, att.filename)
+            await django_client.upload_dokument(
+                akte_id=akte_id, 
+                file_content=att.content, 
+                filename=att.filename,
+                titel=att.filename
+            )
             logger.info(f"Job {job_id}: Uploaded attachment {att.filename}")
 
         # 8. Create Ticket

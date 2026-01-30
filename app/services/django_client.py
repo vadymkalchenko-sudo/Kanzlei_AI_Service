@@ -54,13 +54,16 @@ class DjangoClient:
         """Create a new Ticket"""
         return await self._post_request("ticket/create", ticket_data)
 
-    async def upload_dokument(self, akte_id: int, file_content: bytes, filename: str) -> Dict[str, Any]:
+    async def upload_dokument(self, akte_id: int, file_content: bytes, filename: str, titel: str) -> Dict[str, Any]:
         """Upload a document to an Akte"""
         url = f"{self.base_url}/api/ai/dokument/upload"
         
         # Multipart form data requires special handling
         files = {'file': (filename, file_content)}
-        data = {'akte': str(akte_id)}
+        data = {
+            'akte': str(akte_id),
+            'titel': titel
+        }
         
         # Don't set Content-Type header manually for multipart
         headers = {k: v for k, v in self.headers.items() if k != 'Content-Type'}
