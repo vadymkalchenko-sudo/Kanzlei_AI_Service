@@ -150,6 +150,7 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
                 "unfallort": case_data.unfall.ort,
                 "kennzeichen_gegner": case_data.unfall.kennzeichen_gegner,
                 "kennzeichen_mandant": case_data.unfall.kennzeichen_mandant,
+                "weitere_kennzeichen": case_data.unfall.weitere_kennzeichen,
                 "versicherungsnummer": case_data.gegner_versicherung.schadennummer,
                 "zusammenfassung": case_data.zusammenfassung
             },
@@ -188,8 +189,7 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
                 f"Mandant: {case_data.mandant.vorname} {case_data.mandant.nachname}\n"
                 f"Versicherung: {case_data.gegner_versicherung.name}\n"
                 f"Bitte Daten prüfen und vervollständigen."
-            ),
-            "prioritaet": "Hoch"
+            )
         }
         await django_client.create_ticket(ticket_payload)
         logger.info(f"Job {job_id}: Created review ticket")

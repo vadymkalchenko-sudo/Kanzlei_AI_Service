@@ -35,6 +35,7 @@ class ExtractedAccident(BaseModel):
     ort: str = ""
     kennzeichen_gegner: str = ""
     kennzeichen_mandant: str = ""
+    weitere_kennzeichen: list[str] = [] # Für Anhänger oder Zweitwagen
 
 class CaseData(BaseModel):
     mandant: ExtractedPerson = ExtractedPerson()
@@ -83,6 +84,7 @@ class AIExtractor:
         1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten (auch in Signaturen).
         2. Fahrzeuschein-Analyse: Wenn ein Fahrzeugschein als Bild dabei ist, extrahiere Kennzeichen, Fahrzeughalter (Name/Adresse) und VIN.
         3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen) im gesamten Input.
+        4. Achte auf MEHRERE Kennzeichen (z.B. Zugfahrzeug + Anhänger oder Zweitwagen). Liste diese unter "weitere_kennzeichen".
         
         E-Mail Text:
         {text[:15000]}
@@ -106,7 +108,8 @@ class AIExtractor:
                 "datum": "YYYY-MM-DD", 
                 "ort": "Unfallort",
                 "kennzeichen_gegner": "XX-XX-1234", 
-                "kennzeichen_mandant": "XX-YY-5678 (ggf. aus Fahrzeugschein)"
+                "kennzeichen_mandant": "XX-YY-5678 (ggf. aus Fahrzeugschein)",
+                "weitere_kennzeichen": ["XX-ZZ-9999", "XX-AA-0000"]
             }},
             "betreff": "Kurzer Betreff für Akte (z.B. Unfall vom ...)",
             "zusammenfassung": "Kurze inhaltliche Zusammenfassung",
