@@ -37,9 +37,30 @@ class DjangoClient:
                 raise Exception(f"Backend Connection Error: {str(e)}")
 
     async def create_mandant(self, mandant_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new Mandant"""
-        # Payload structure should match AIMandantCreateSerializer
-        return await self._post_request("mandant/create", mandant_data)
+        """Create a new Mandant or find existing if duplicate"""
+        try:
+            return await self._post_request("mandant/create", mandant_data)
+        except Exception as e:
+            # Check for duplicate error with ID
+            error_str = str(e)
+            if "existiert bereits (ID:" in error_str:
+                try:
+                    # Extract ID: remove everything before (ID: and then take the number
+                    # Example: ... (ID: 17).]
+                    import re
+                    match = re.search(r"\(ID:\s*(\d+)\)", error_str)
+                    if match:
+                        existing_id = int(match.group(1))
+                        logger.info(f"Recovered existing Mandant ID {existing_id} from error message")
+                        return {
+                            'mandant_id': existing_id,
+                            'name': f"{mandant_data.get('vorname', '')} {mandant_data.get('nachname', '')}".strip()
+                        }
+                except Exception as parse_error:
+                    logger.error(f"Failed to parse ID from error: {parse_error}")
+            
+            # Re-raise if not handled
+            raise
 
     async def lookup_or_create_gegner(self, gegner_data: Dict[str, Any]) -> Dict[str, Any]:
         """Find or create a Gegner (Versicherung)"""
