@@ -154,7 +154,25 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
                 "versicherungsnummer": case_data.gegner_versicherung.schadennummer,
                 "zusammenfassung": case_data.zusammenfassung
             },
-            "fragebogen_data": case_data.dict() # Store raw AI data
+            "fragebogen_data": {
+                # Mapping auf flache Frontend-Struktur (FragebogenData interface)
+                "datum_zeit": case_data.unfall.datum,
+                "unfallort": case_data.unfall.ort,
+                "kfz_kennzeichen": case_data.unfall.kennzeichen_mandant,
+                
+                "vers_gegner": case_data.gegner_versicherung.name,
+                "gegner_kfz": case_data.unfall.kennzeichen_gegner,
+                "schaden_nr": case_data.gegner_versicherung.schadennummer,
+                
+                # Neue Fahrzeugdaten
+                "kfz_typ": case_data.fahrzeug.typ,
+                "kfz_kw_ps": case_data.fahrzeug.kw,
+                "kfz_ez": case_data.fahrzeug.ez,
+                
+                # Defaults
+                "polizei": False,
+                "zeugen": False
+            }
         }
         akte_resp = await django_client.create_akte(akte_payload)
         akte_id = akte_resp['akte_id']

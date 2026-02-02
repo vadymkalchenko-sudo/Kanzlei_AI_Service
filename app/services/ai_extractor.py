@@ -30,6 +30,11 @@ class ExtractedInsurance(BaseModel):
     schadennummer: str = ""
     adresse: ExtractedAddress = ExtractedAddress()
 
+class ExtractedVehicle(BaseModel):
+    typ: str = "" # z.B. VW Golf
+    kw: str = "" # Nennleistung in KW
+    ez: str = "" # Erstzulassung YYYY-MM-DD
+
 class ExtractedAccident(BaseModel):
     datum: str = ""  # YYYY-MM-DD
     ort: str = ""
@@ -41,6 +46,7 @@ class CaseData(BaseModel):
     mandant: ExtractedPerson = ExtractedPerson()
     gegner_versicherung: ExtractedInsurance = ExtractedInsurance()
     unfall: ExtractedAccident = ExtractedAccident()
+    fahrzeug: ExtractedVehicle = ExtractedVehicle() # NEU: Fahrzeugdaten
     betreff: str = ""
     zusammenfassung: str = ""
     handlungsbedarf: str = ""
@@ -65,15 +71,13 @@ class AIExtractor:
     async def extract_case_data(self, text: str, attachments: list = None) -> CaseData:
         """
         Extracts structured case data from text and attachments using LLM.
-        attachments: List of dicts {'mime_type': str, 'data': bytes}
         """
-        # Lazy config check
         if not self.model:
             logger.info("Model not ready, trying to configure again...")
             self.configure_genai()
 
         if not self.model:
-            logger.warning("No AI model configured (still None after retry), returning empty structure")
+            logger.warning("No AI model configured, returning empty structure")
             return CaseData()
 
         prompt_text = f"""
@@ -81,10 +85,12 @@ class AIExtractor:
         Extrahiere strukturierte Daten für eine neue Verkehrsrecht-Akte.
         
         WICHTIG: 
-        1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten (auch in Signaturen).
-        2. Fahrzeuschein-Analyse: Wenn ein Fahrzeugschein als Bild dabei ist, extrahiere Kennzeichen, Fahrzeughalter (Name/Adresse) und VIN.
-        3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen) im gesamten Input.
-        4. Achte auf MEHRERE Kennzeichen (z.B. Zugfahrzeug + Anhänger oder Zweitwagen). Liste diese unter "weitere_kennzeichen".
+        1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten.
+        2. Fahrzeuschein-Analyse (Scan/Foto): 
+           - Extrahiere Kennzeichen, Halter, VIN.
+           - Extrahiere Technische Daten: Marke/Typ (D.1/D.3), Nennleistung in KW (P.2), Erstzulassung (B).
+        3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen, Schadennummer).
+        4. Achte auf MEHRERE Kennzeichen (z.B. Anhänger).
         
         E-Mail Text:
         {text[:15000]}
@@ -92,28 +98,28 @@ class AIExtractor:
         Antworte NUR mit validem JSON (ohne Markdown), das genau diesem Schema entspricht:
         {{
             "mandant": {{
-                "vorname": "Vorname (falls nicht gefunden, leer lassen)", 
-                "nachname": "Nachname", 
-                "anrede": "Herr/Frau",
+                "vorname": "Vorname", "nachname": "Nachname", "anrede": "Herr/Frau",
                 "adresse": {{ "strasse": "", "plz": "", "ort": "" }},
-                "email": "Email des Absenders/Mandanten", 
-                "telefon": "Telefonnummer aus Signatur/Text"
+                "email": "Email", "telefon": "Tel"
             }},
             "gegner_versicherung": {{
-                "name": "Name der Versicherung", 
-                "schadennummer": "Schadennummer/Aktenzeichen d. Versicherung",
+                "name": "Name Vers.", "schadennummer": "Schadennummer",
                  "adresse": {{ "strasse": "", "plz": "", "ort": "" }}
             }},
             "unfall": {{
-                "datum": "YYYY-MM-DD", 
-                "ort": "Unfallort",
+                "datum": "YYYY-MM-DD", "ort": "Ort",
                 "kennzeichen_gegner": "XX-XX-1234", 
-                "kennzeichen_mandant": "XX-YY-5678 (ggf. aus Fahrzeugschein)",
-                "weitere_kennzeichen": ["XX-ZZ-9999", "XX-AA-0000"]
+                "kennzeichen_mandant": "XX-YY-5678",
+                "weitere_kennzeichen": []
             }},
-            "betreff": "Kurzer Betreff für Akte (z.B. Unfall vom ...)",
-            "zusammenfassung": "Kurze inhaltliche Zusammenfassung",
-            "handlungsbedarf": "Was muss getan werden? (z.B. Anspruchsschreiben erstellen)"
+            "fahrzeug": {{
+                "typ": "Marke Modell (z.B. VW Touran)",
+                "kw": "110 (nur Zahl)",
+                "ez": "YYYY-MM-DD"
+            }},
+            "betreff": "Betreff",
+            "zusammenfassung": "Zusammenfassung",
+            "handlungsbedarf": "Handlungsbedarf"
         }}
         """
 
