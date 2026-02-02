@@ -181,6 +181,7 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
             logger.info(f"Job {job_id}: Uploaded attachment {att.filename}")
 
         # 8. Create Ticket
+        import datetime
         ticket_payload = {
             "akte": akte_id,
             "titel": "KI: Neue Akte aus E-Mail",
@@ -189,7 +190,8 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
                 f"Mandant: {case_data.mandant.vorname} {case_data.mandant.nachname}\n"
                 f"Versicherung: {case_data.gegner_versicherung.name}\n"
                 f"Bitte Daten prüfen und vervollständigen."
-            )
+            ),
+            "faellig_am": datetime.date.today().isoformat()
         }
         await django_client.create_ticket(ticket_payload)
         logger.info(f"Job {job_id}: Created review ticket")
