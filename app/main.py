@@ -118,24 +118,15 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         # ... (Mappings remain same) ...
 
         # 3. Create Mandant
-        ansprache = safe_get(case_data, 'mandant', 'anrede')
-        if not ansprache or ansprache not in ["Herr", "Frau", "Firma"]:
-            ansprache = "Herr" # Default fallback
-            
-        email = safe_get(case_data, 'mandant', 'email')
-        if not email:
-            # Backend requires valid email. Generate unique placeholder to avoid duplicates/crashes.
-            email = f"fehlt_{job_id[:8]}@unbekannt.local"
-
         mandant_payload = {
             "vorname": safe_get(case_data, 'mandant', 'vorname'),
             "nachname": safe_get(case_data, 'mandant', 'nachname'),
-            "ansprache": ansprache,
+            "ansprache": safe_get(case_data, 'mandant', 'anrede'),
             "strasse": safe_get(case_data, 'mandant', 'adresse', 'strasse'),
             "hausnummer": safe_get(case_data, 'mandant', 'adresse', 'hausnummer'),
             "plz": safe_get(case_data, 'mandant', 'adresse', 'plz'),
             "stadt": safe_get(case_data, 'mandant', 'adresse', 'ort'),
-            "email": email,
+            "email": safe_get(case_data, 'mandant', 'email'),
             "telefon": safe_get(case_data, 'mandant', 'telefon'),
             "ignore_conflicts": True 
         }
