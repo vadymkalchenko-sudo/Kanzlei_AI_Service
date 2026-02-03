@@ -130,12 +130,24 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         if not gegner_name or not gegner_name.strip():
             gegner_name = "Unbekannte Versicherung"
 
+        # Handle missing address (Versicherung kann unbekannt sein)
+        if case_data.gegner_versicherung.adresse:
+            gegner_strasse = case_data.gegner_versicherung.adresse.strasse or ""
+            gegner_hausnummer = case_data.gegner_versicherung.adresse.hausnummer or ""
+            gegner_plz = case_data.gegner_versicherung.adresse.plz or ""
+            gegner_stadt = case_data.gegner_versicherung.adresse.ort or ""
+        else:
+            gegner_strasse = ""
+            gegner_hausnummer = ""
+            gegner_plz = ""
+            gegner_stadt = ""
+
         gegner_payload = {
             "name": gegner_name,
-            "strasse": case_data.gegner_versicherung.adresse.strasse,
-            "hausnummer": case_data.gegner_versicherung.adresse.hausnummer,
-            "plz": case_data.gegner_versicherung.adresse.plz,
-            "stadt": case_data.gegner_versicherung.adresse.ort,
+            "strasse": gegner_strasse,
+            "hausnummer": gegner_hausnummer,
+            "plz": gegner_plz,
+            "stadt": gegner_stadt,
             "ignore_conflicts": True
         }
         gegner_resp = await django_client.lookup_or_create_gegner(gegner_payload)
