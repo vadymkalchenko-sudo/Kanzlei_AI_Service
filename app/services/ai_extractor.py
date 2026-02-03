@@ -102,15 +102,13 @@ class AIExtractor:
                 if not loki_client:
                     raise ValueError("Loki client not initialized")
                 
-                logger.info("🤖 Using Loki (Two-Model Architecture)")
+                logger.info("🤖 Using Loki (Single-Model Architecture)")
                 
-                # Call Loki two-step extraction
+                # Call Loki single-step extraction
                 result = await loki_client.extract_akte_data(text, [])
                 
                 # Log metrics
                 metrics = result.get("metrics", {})
-                logger.info(f"📊 Vision Model: {metrics.get('vision_model_time', 0):.2f}s")
-                logger.info(f"📊 Mapping Model: {metrics.get('mapping_model_time', 0):.2f}s")
                 logger.info(f"📊 Total Time: {metrics.get('total_extraction_time', 0):.2f}s")
                 
                 # Parse to CaseData
