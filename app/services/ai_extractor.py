@@ -15,8 +15,16 @@ logger = logging.getLogger(__name__)
 # Pydantic Models for Extraction
 class ExtractedAddress(BaseModel):
     strasse: Optional[str] = None
+    hausnummer: Optional[str] = None
     plz: Optional[str] = None
     ort: Optional[str] = None
+
+# ... (Previous models remain same, skipping to keep context concise if allowed by tool, ensuring replacement covers target correctly)
+
+# Since I need to replace ExtractedAddress AND the Prompt later in the file, I might need two chunks or one big chunk if they are close. 
+# They are far apart (Lines 16 vs 150). usage of multi_replace is better.
+# switching to multi_replace in next thought or just doing address first then prompt.
+# I will use replace_file_content for the Model first.
 
 class ExtractedPerson(BaseModel):
     vorname: Optional[str] = None
@@ -156,7 +164,7 @@ class AIExtractor:
             1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten.
             2. Fahrzeuschein-Analyse (Scan/Foto): 
                - Extrahiere Kennzeichen, Halter, VIN.
-               - Extrahiere Technische Daten: Marke/Typ (D.1/D.3), Nennleistung in KW (P.2), Erstzulassung (B).
+               - Extrahiere Technische Daten: Marke (D.1) und Modell/Handelsbezeichnung (D.3). Achtung: Feld J (Fahrzeugklasse) ist NICHT das Modell! Nennleistung in KW (P.2), Erstzulassung (B).
             3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen, Schadennummer).
             4. Achte auf MEHRERE Kennzeichen (z.B. Anhänger).
             
@@ -167,12 +175,12 @@ class AIExtractor:
             {{
                 "mandant": {{
                     "vorname": "Vorname", "nachname": "Nachname", "anrede": "Herr/Frau",
-                    "adresse": {{ "strasse": "", "plz": "", "ort": "" }},
+                    "adresse": {{ "strasse": "Strasse", "hausnummer": "Nr", "plz": "PLZ", "ort": "Ort" }},
                     "email": "Email", "telefon": "Tel"
                 }},
                 "gegner_versicherung": {{
                     "name": "Name Vers.", "schadennummer": "Schadennummer",
-                     "adresse": {{ "strasse": "", "plz": "", "ort": "" }}
+                     "adresse": {{ "strasse": "", "hausnummer": "", "plz": "", "ort": "" }}
                 }},
                 "unfall": {{
                     "datum": "YYYY-MM-DD", "ort": "Ort",
@@ -181,7 +189,7 @@ class AIExtractor:
                     "weitere_kennzeichen": []
                 }},
                 "fahrzeug": {{
-                    "typ": "Marke Modell (z.B. VW Touran)",
+                    "typ": "Marke Modell (z.B. VW Touran, aus Feld D.3)",
                     "kw": "110 (nur Zahl)",
                     "ez": "YYYY-MM-DD"
                 }},
@@ -189,6 +197,10 @@ class AIExtractor:
                 "zusammenfassung": "Zusammenfassung",
                 "handlungsbedarf": "Handlungsbedarf"
             }}
+            
+            REGELN:
+            - Wenn Daten fehlen, setze null. ERFINDE NICHTS (Keine "Unbekannt" Platzhalter)!
+            - Trenne Straße und Hausnummer strikt.
             """
 
             # Prepare multimodal content parts

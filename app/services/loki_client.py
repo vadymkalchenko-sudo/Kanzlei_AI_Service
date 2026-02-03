@@ -85,7 +85,7 @@ WICHTIG:
 1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten.
 2. Fahrzeuschein-Analyse (Scan/Foto): 
    - Extrahiere Kennzeichen, Halter, VIN.
-   - Extrahiere Technische Daten: Marke/Typ (D.1/D.3), Nennleistung in KW (P.2), Erstzulassung (B).
+   - Extrahiere Technische Daten: Marke (D.1) und Modell/Handelsbezeichnung (D.3). Achtung: Feld J (Fahrzeugklasse) ist NICHT das Modell! Nennleistung in KW (P.2), Erstzulassung (B).
 3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen, Schadennummer).
 4. Achte auf MEHRERE Kennzeichen (z.B. Anhänger).
 
@@ -165,12 +165,12 @@ DJANGO-SCHEMA:
 {{
   "mandant": {{
     "vorname": "", "nachname": "", "anrede": "Herr/Frau",
-    "adresse": {{ "strasse": "", "plz": "", "ort": "" }},
+    "adresse": {{ "strasse": "", "hausnummer": "", "plz": "", "ort": "" }},
     "email": "", "telefon": ""
   }},
   "gegner_versicherung": {{
     "name": "", "schadennummer": "",
-    "adresse": {{ "strasse": "", "plz": "", "ort": "" }}
+    "adresse": {{ "strasse": "", "hausnummer": "", "plz": "", "ort": "" }}
   }},
   "unfall": {{
     "datum": "YYYY-MM-DD", "ort": "",
@@ -190,11 +190,12 @@ DJANGO-SCHEMA:
 
 MAPPING-REGELN:
 1. Trenne "Max Mustermann" in vorname="Max", nachname="Mustermann"
-2. Trenne "Berliner Str. 1, 10115 Berlin" in strasse="Berliner Str. 1", plz="10115", ort="Berlin"
+2. Trenne Strasse und Hausnummer: "Berliner Str. 1" -> strasse="Berliner Str.", hausnummer="1".
+   Achtung: Wenn Adressen in Rohdaten zusammenkleben, trenne sie logisch.
 3. Erste Person in "personen" = Mandant
 4. Erste Versicherung = Gegner-Versicherung
 5. Erstes Fahrzeug = Mandant-Fahrzeug
-6. Wenn Daten fehlen, setze null (nicht "")
+6. Wenn Daten fehlen, setze null. ERFINDE KEINE DATEN (z.B. "Unbekannt"). Nur Fakten aus Rohdaten!
 7. Betreff = "Verkehrsunfall vom [Datum]"
 8. Zusammenfassung = Kurze Beschreibung des Unfalls
 9. Handlungsbedarf = "Akte prüfen und Mandant kontaktieren"
