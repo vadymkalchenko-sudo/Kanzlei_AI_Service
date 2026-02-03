@@ -59,15 +59,6 @@ async def health_check():
     }
 
 
-def safe_get(obj, *path, default=""):
-    """Safely navigate object attributes. Returns default (empty string) if None or missing."""
-    current = obj
-    for attr in path:
-        if current is None:
-            return default
-        current = getattr(current, attr, None)
-    return current if current is not None else default
-
 async def process_email_background_task(job_id: str, email_content_bytes: bytes, filename: str):
     """
     Background task to process the email and create structures in Django
@@ -118,45 +109,33 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         # ... (Mappings remain same) ...
 
         # 3. Create Mandant
-        ansprache = safe_get(case_data, 'mandant', 'anrede')
-        if not ansprache or ansprache not in ["Herr", "Frau", "Firma"]:
-            ansprache = "Herr"
-
         mandant_payload = {
-            "vorname": safe_get(case_data, 'mandant', 'vorname'),
-            "nachname": safe_get(case_data, 'mandant', 'nachname'),
-            "ansprache": ansprache,
-            "strasse": safe_get(case_data, 'mandant', 'adresse', 'strasse'),
-            "hausnummer": safe_get(case_data, 'mandant', 'adresse', 'hausnummer'),
-            "plz": safe_get(case_data, 'mandant', 'adresse', 'plz'),
-            "stadt": safe_get(case_data, 'mandant', 'adresse', 'ort'),
+            "vorname": case_data.mandant.vorname,
+            "nachname": case_data.mandant.nachname,
+            "ansprache": case_data.mandant.anrede,
+            "strasse": case_data.mandant.adresse.strasse,
+            "hausnummer": case_data.mandant.adresse.hausnummer,
+            "plz": case_data.mandant.adresse.plz,
+            "stadt": case_data.mandant.adresse.ort,
+            "email": case_data.mandant.email,
+            "telefon": case_data.mandant.telefon,
             "ignore_conflicts": True 
         }
-
-        # Optional fields: Add only if present to avoid validation errors (e.g. empty email string)
-        email = safe_get(case_data, 'mandant', 'email')
-        if email:
-            mandant_payload["email"] = email
-
-        telefon = safe_get(case_data, 'mandant', 'telefon')
-        if telefon:
-            mandant_payload["telefon"] = telefon
-            
         mandant_resp = await django_client.create_mandant(mandant_payload)
         mandant_id = mandant_resp['mandant_id']
         logger.info(f"Job {job_id}: Created Mandant {mandant_id}")
 
         # 4. Lookup/Create Gegner
-        gegner_name = safe_get(case_data, 'gegner_versicherung', 'name')
+        gegner_name = case_data.gegner_versicherung.name
         if not gegner_name or not gegner_name.strip():
             gegner_name = "Unbekannte Versicherung"
 
         gegner_payload = {
             "name": gegner_name,
-            "strasse": safe_get(case_data, 'gegner_versicherung', 'adresse', 'strasse'),
-            "hausnummer": safe_get(case_data, 'gegner_versicherung', 'adresse', 'hausnummer'),
-            "plz": safe_get(case_data, 'gegner_versicherung', 'adresse', 'plz'),
-            "stadt": safe_get(case_data, 'gegner_versicherung', 'adresse', 'ort'),
+            "strasse": case_data.gegner_versicherung.adresse.strasse,
+            "hausnummer": case_data.gegner_versicherung.adresse.hausnummer,
+            "plz": case_data.gegner_versicherung.adresse.plz,
+            "stadt": case_data.gegner_versicherung.adresse.ort,
             "ignore_conflicts": True
         }
         gegner_resp = await django_client.lookup_or_create_gegner(gegner_payload)
@@ -168,29 +147,29 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
             "mandant": mandant_id,
             "gegner": gegner_id,
             "info_zusatz": {
-                "betreff": safe_get(case_data, 'betreff'),
-                "unfalldatum": safe_get(case_data, 'unfall', 'datum'),
-                "unfallort": safe_get(case_data, 'unfall', 'ort'),
-                "kennzeichen_gegner": safe_get(case_data, 'unfall', 'kennzeichen_gegner'),
-                "kennzeichen_mandant": safe_get(case_data, 'unfall', 'kennzeichen_mandant'),
-                "weitere_kennzeichen": safe_get(case_data, 'unfall', 'weitere_kennzeichen', default=[]),
-                "versicherungsnummer": safe_get(case_data, 'gegner_versicherung', 'schadennummer'),
-                "zusammenfassung": safe_get(case_data, 'zusammenfassung')
+                "betreff": case_data.betreff,
+                "unfalldatum": case_data.unfall.datum,
+                "unfallort": case_data.unfall.ort,
+                "kennzeichen_gegner": case_data.unfall.kennzeichen_gegner,
+                "kennzeichen_mandant": case_data.unfall.kennzeichen_mandant,
+                "weitere_kennzeichen": case_data.unfall.weitere_kennzeichen,
+                "versicherungsnummer": case_data.gegner_versicherung.schadennummer,
+                "zusammenfassung": case_data.zusammenfassung
             },
             "fragebogen_data": {
                 # Mapping auf flache Frontend-Struktur (FragebogenData interface)
-                "datum_zeit": safe_get(case_data, 'unfall', 'datum'),
-                "unfallort": safe_get(case_data, 'unfall', 'ort'),
-                "kfz_kennzeichen": safe_get(case_data, 'unfall', 'kennzeichen_mandant'),
+                "datum_zeit": case_data.unfall.datum,
+                "unfallort": case_data.unfall.ort,
+                "kfz_kennzeichen": case_data.unfall.kennzeichen_mandant,
                 
-                "vers_gegner": safe_get(case_data, 'gegner_versicherung', 'name'),
-                "gegner_kfz": safe_get(case_data, 'unfall', 'kennzeichen_gegner'),
-                "schaden_nr": safe_get(case_data, 'gegner_versicherung', 'schadennummer'),
+                "vers_gegner": case_data.gegner_versicherung.name,
+                "gegner_kfz": case_data.unfall.kennzeichen_gegner,
+                "schaden_nr": case_data.gegner_versicherung.schadennummer,
                 
                 # Neue Fahrzeugdaten
-                "kfz_typ": safe_get(case_data, 'fahrzeug', 'typ'),
-                "kfz_kw_ps": safe_get(case_data, 'fahrzeug', 'kw'),
-                "kfz_ez": safe_get(case_data, 'fahrzeug', 'ez'),
+                "kfz_typ": case_data.fahrzeug.typ,
+                "kfz_kw_ps": case_data.fahrzeug.kw,
+                "kfz_ez": case_data.fahrzeug.ez,
                 
                 # Defaults
                 "polizei": False,
@@ -228,8 +207,8 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
             "titel": "KI: Neue Akte aus E-Mail",
             "beschreibung": (
                 f"Automatisch angelegt aus E-Mail '{email_content.subject}'.\n"
-                f"Mandant: {safe_get(case_data, 'mandant', 'vorname')} {safe_get(case_data, 'mandant', 'nachname')}\n"
-                f"Versicherung: {safe_get(case_data, 'gegner_versicherung', 'name')}\n"
+                f"Mandant: {case_data.mandant.vorname} {case_data.mandant.nachname}\n"
+                f"Versicherung: {case_data.gegner_versicherung.name}\n"
                 f"Bitte Daten prüfen und vervollständigen."
             ),
             "faellig_am": datetime.date.today().isoformat()
