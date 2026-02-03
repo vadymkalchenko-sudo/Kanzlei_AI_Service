@@ -30,14 +30,14 @@ class ExtractedPerson(BaseModel):
     vorname: Optional[str] = None
     nachname: Optional[str] = None
     anrede: Optional[str] = None
-    adresse: ExtractedAddress = ExtractedAddress()
+    adresse: Optional[ExtractedAddress] = None
     email: Optional[str] = None
     telefon: Optional[str] = None
 
 class ExtractedInsurance(BaseModel):
     name: Optional[str] = None
     schadennummer: Optional[str] = None
-    adresse: ExtractedAddress = ExtractedAddress()
+    adresse: Optional[ExtractedAddress] = None
 
 class ExtractedVehicle(BaseModel):
     typ: Optional[str] = None # z.B. VW Golf
@@ -52,13 +52,13 @@ class ExtractedAccident(BaseModel):
     weitere_kennzeichen: list[str] = [] # Für Anhänger oder Zweitwagen
 
 class CaseData(BaseModel):
-    mandant: ExtractedPerson = ExtractedPerson()
-    gegner_versicherung: ExtractedInsurance = ExtractedInsurance()
-    unfall: ExtractedAccident = ExtractedAccident()
-    fahrzeug: ExtractedVehicle = ExtractedVehicle() # NEU: Fahrzeugdaten
-    betreff: str = ""
-    zusammenfassung: str = ""
-    handlungsbedarf: str = ""
+    mandant: Optional[ExtractedPerson] = None
+    gegner_versicherung: Optional[ExtractedInsurance] = None
+    unfall: Optional[ExtractedAccident] = None
+    fahrzeug: Optional[ExtractedVehicle] = None # NEU: Fahrzeugdaten
+    betreff: Optional[str] = None
+    zusammenfassung: Optional[str] = None
+    handlungsbedarf: Optional[str] = None
 
 class AIExtractor:
     def __init__(self):
