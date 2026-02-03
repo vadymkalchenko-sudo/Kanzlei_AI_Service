@@ -81,8 +81,10 @@ class LokiClient:
 
 Analysiere die folgende E-Mail (inklusive Header, Signatur, Footer) UND die angehängten Bilder/Dokumente (z.B. Fahrzeugscheine, Unfallskizzen).
 
-WICHTIG: 
-1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten.
+WICHTIG - PRIORITÄT 1 (KONTAKT):
+1. E-MAIL ADRESSE & TELEFONNUMMER FINDEN!
+   - Suche im E-Mail-Header ("From:", "Von:"), in der Signatur oder im Footer.
+   - Suche nach "@"-Zeichen im Text. Das ist CRITICAL!
 2. Fahrzeuschein-Analyse (Scan/Foto): 
    - Extrahiere Kennzeichen, Halter, VIN.
    - Extrahiere Technische Daten: Marke (D.1) und Modell/Handelsbezeichnung (D.3). Achtung: Feld J (Fahrzeugklasse) ist NICHT das Modell! Nennleistung in KW (P.2), Erstzulassung (B).
@@ -193,6 +195,8 @@ MAPPING-REGELN:
 2. Trenne Strasse und Hausnummer: "Berliner Str. 1" -> strasse="Berliner Str.", hausnummer="1".
    Achtung: Wenn Adressen in Rohdaten zusammenkleben, trenne sie logisch.
 3. Erste Person in "personen" = Mandant
+   - WICHTIG: Übernimm die E-Mail-Adresse aus den Rohdaten!
+   - Bestimme "anrede" anhand des Vornamens (z.B. Jennifer -> Frau, Thomas -> Herr) falls leer.
 4. Erste Versicherung = Gegner-Versicherung
 5. Erstes Fahrzeug = Mandant-Fahrzeug
 6. Wenn Daten fehlen, setze null. ERFINDE KEINE DATEN (z.B. "Unbekannt"). Nur Fakten aus Rohdaten!
