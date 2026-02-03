@@ -12,34 +12,35 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Pydantic Models for Extraction
+# Pydantic Models for Extraction
 class ExtractedAddress(BaseModel):
-    strasse: str = ""
-    plz: str = ""
-    ort: str = ""
+    strasse: Optional[str] = None
+    plz: Optional[str] = None
+    ort: Optional[str] = None
 
 class ExtractedPerson(BaseModel):
-    vorname: str = ""
-    nachname: str = ""
-    anrede: str = ""
+    vorname: Optional[str] = None
+    nachname: Optional[str] = None
+    anrede: Optional[str] = None
     adresse: ExtractedAddress = ExtractedAddress()
-    email: str = ""
-    telefon: str = ""
+    email: Optional[str] = None
+    telefon: Optional[str] = None
 
 class ExtractedInsurance(BaseModel):
-    name: str = ""
-    schadennummer: str = ""
+    name: Optional[str] = None
+    schadennummer: Optional[str] = None
     adresse: ExtractedAddress = ExtractedAddress()
 
 class ExtractedVehicle(BaseModel):
-    typ: str = "" # z.B. VW Golf
-    kw: str = "" # Nennleistung in KW
-    ez: str = "" # Erstzulassung YYYY-MM-DD
+    typ: Optional[str] = None # z.B. VW Golf
+    kw: Optional[str] = None # Nennleistung in KW
+    ez: Optional[str] = None # Erstzulassung YYYY-MM-DD
 
 class ExtractedAccident(BaseModel):
-    datum: str = ""  # YYYY-MM-DD
-    ort: str = ""
-    kennzeichen_gegner: str = ""
-    kennzeichen_mandant: str = ""
+    datum: Optional[str] = None  # YYYY-MM-DD
+    ort: Optional[str] = None
+    kennzeichen_gegner: Optional[str] = None
+    kennzeichen_mandant: Optional[str] = None
     weitere_kennzeichen: list[str] = [] # Für Anhänger oder Zweitwagen
 
 class CaseData(BaseModel):
