@@ -118,18 +118,30 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         # ... (Mappings remain same) ...
 
         # 3. Create Mandant
+        ansprache = safe_get(case_data, 'mandant', 'anrede')
+        if not ansprache or ansprache not in ["Herr", "Frau", "Firma"]:
+            ansprache = "Herr"
+
         mandant_payload = {
             "vorname": safe_get(case_data, 'mandant', 'vorname'),
             "nachname": safe_get(case_data, 'mandant', 'nachname'),
-            "ansprache": safe_get(case_data, 'mandant', 'anrede'),
+            "ansprache": ansprache,
             "strasse": safe_get(case_data, 'mandant', 'adresse', 'strasse'),
             "hausnummer": safe_get(case_data, 'mandant', 'adresse', 'hausnummer'),
             "plz": safe_get(case_data, 'mandant', 'adresse', 'plz'),
             "stadt": safe_get(case_data, 'mandant', 'adresse', 'ort'),
-            "email": safe_get(case_data, 'mandant', 'email'),
-            "telefon": safe_get(case_data, 'mandant', 'telefon'),
             "ignore_conflicts": True 
         }
+
+        # Optional fields: Add only if present to avoid validation errors (e.g. empty email string)
+        email = safe_get(case_data, 'mandant', 'email')
+        if email:
+            mandant_payload["email"] = email
+
+        telefon = safe_get(case_data, 'mandant', 'telefon')
+        if telefon:
+            mandant_payload["telefon"] = telefon
+            
         mandant_resp = await django_client.create_mandant(mandant_payload)
         mandant_id = mandant_resp['mandant_id']
         logger.info(f"Job {job_id}: Created Mandant {mandant_id}")
