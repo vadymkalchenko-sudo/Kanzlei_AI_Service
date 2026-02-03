@@ -71,87 +71,162 @@ class AIExtractor:
     async def extract_case_data(self, text: str, attachments: list = None) -> CaseData:
         """
         Extracts structured case data from text and attachments using LLM.
+        
+        Two-Model Logic (Loki):
+        1. Vision model extracts raw data
+        2. Mapping model structures for Django
+        
+        Fallback: If Loki fails, permanently switch to Gemini
         """
-        if not self.model:
-            logger.info("Model not ready, trying to configure again...")
-            self.configure_genai()
-
-        if not self.model:
-            logger.warning("No AI model configured, returning empty structure")
-            return CaseData()
-
-        prompt_text = f"""
-        Du bist ein juristischer Assistent. Analysiere die folgende E-Mail (inklusive Header, Signatur, Footer) UND die angehängten Bilder/Dokumente (z.B. Fahrzeugscheine, Unfallskizzen).
-        Extrahiere strukturierte Daten für eine neue Verkehrsrecht-Akte.
+        import httpx
+        import time
         
-        WICHTIG: 
-        1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten.
-        2. Fahrzeuschein-Analyse (Scan/Foto): 
-           - Extrahiere Kennzeichen, Halter, VIN.
-           - Extrahiere Technische Daten: Marke/Typ (D.1/D.3), Nennleistung in KW (P.2), Erstzulassung (B).
-        3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen, Schadennummer).
-        4. Achte auf MEHRERE Kennzeichen (z.B. Anhänger).
+        start_time = time.time()
+        provider_used = settings.llm_provider
+        fallback_triggered = False
         
-        E-Mail Text:
-        {text[:15000]}
+        # Try Loki first (if configured)
+        if settings.llm_provider == "loki":
+            try:
+                from app.services.loki_client import loki_client
+                
+                if not loki_client:
+                    raise ValueError("Loki client not initialized")
+                
+                logger.info("🤖 Using Loki (Two-Model Architecture)")
+                
+                # Call Loki two-step extraction
+                result = await loki_client.extract_akte_data(text, [])
+                
+                # Log metrics
+                metrics = result.get("metrics", {})
+                logger.info(f"📊 Vision Model: {metrics.get('vision_model_time', 0):.2f}s")
+                logger.info(f"📊 Mapping Model: {metrics.get('mapping_model_time', 0):.2f}s")
+                logger.info(f"📊 Total Time: {metrics.get('total_extraction_time', 0):.2f}s")
+                
+                # Parse to CaseData
+                parsed_data = result.get("parsed_data", {})
+                case_data = CaseData(**parsed_data)
+                
+                # Log success
+                fields_count = sum(1 for field in parsed_data.values() if field)
+                logger.info(f"✅ Loki extraction successful ({fields_count} fields extracted)")
+                
+                return case_data
+                
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as e:
+                logger.warning(f"⚠️  GPU-Server nicht erreichbar: {str(e)}")
+                logger.warning("🔄 FALLBACK: Wechsel zu Gemini (permanent)")
+                
+                # Permanent fallback
+                settings.llm_provider = "gemini"
+                provider_used = "gemini"
+                fallback_triggered = True
+                
+            except Exception as e:
+                logger.error(f"❌ Loki extraction failed: {str(e)}")
+                logger.warning("🔄 FALLBACK: Wechsel zu Gemini (permanent)")
+                
+                # Permanent fallback
+                settings.llm_provider = "gemini"
+                provider_used = "gemini"
+                fallback_triggered = True
         
-        Antworte NUR mit validem JSON (ohne Markdown), das genau diesem Schema entspricht:
-        {{
-            "mandant": {{
-                "vorname": "Vorname", "nachname": "Nachname", "anrede": "Herr/Frau",
-                "adresse": {{ "strasse": "", "plz": "", "ort": "" }},
-                "email": "Email", "telefon": "Tel"
-            }},
-            "gegner_versicherung": {{
-                "name": "Name Vers.", "schadennummer": "Schadennummer",
-                 "adresse": {{ "strasse": "", "plz": "", "ort": "" }}
-            }},
-            "unfall": {{
-                "datum": "YYYY-MM-DD", "ort": "Ort",
-                "kennzeichen_gegner": "XX-XX-1234", 
-                "kennzeichen_mandant": "XX-YY-5678",
-                "weitere_kennzeichen": []
-            }},
-            "fahrzeug": {{
-                "typ": "Marke Modell (z.B. VW Touran)",
-                "kw": "110 (nur Zahl)",
-                "ez": "YYYY-MM-DD"
-            }},
-            "betreff": "Betreff",
-            "zusammenfassung": "Zusammenfassung",
-            "handlungsbedarf": "Handlungsbedarf"
-        }}
-        """
+        # Use Gemini (either configured or fallback)
+        if settings.llm_provider == "gemini":
+            if not self.model:
+                logger.info("Model not ready, trying to configure again...")
+                self.configure_genai()
 
-        # Prepare multimodal content parts
-        content_parts = [prompt_text]
-        
-        if attachments:
-            for att in attachments:
-                # Gemini expects dict with 'mime_type' and 'data' keys for blob
-                # We assume att is already {'mime_type': ..., 'data': ...}
-                content_parts.append({
-                    "mime_type": att['mime_type'],
-                    "data": att['data']
-                })
-                logger.info(f"Added attachment to AI context: {att.get('mime_type')}")
-
-        try:
-            response = self.model.generate_content(content_parts)
-            json_str = response.text.strip()
+            if not self.model:
+                logger.warning("No AI model configured, returning empty structure")
+                return CaseData()
             
-            # Clean up potential markdown formatting ```json ... ```
-            if json_str.startswith("```"):
-                json_str = json_str.strip("`")
-                if json_str.startswith("json"):
-                    json_str = json_str[4:]
+            if fallback_triggered:
+                logger.info("🌐 Using Gemini (Fallback from Loki)")
+            else:
+                logger.info("🌐 Using Gemini (Configured)")
+
+            prompt_text = f"""
+            Du bist ein juristischer Assistent. Analysiere die folgende E-Mail (inklusive Header, Signatur, Footer) UND die angehängten Bilder/Dokumente (z.B. Fahrzeugscheine, Unfallskizzen).
+            Extrahiere strukturierte Daten für eine neue Verkehrsrecht-Akte.
             
-            data = json.loads(json_str)
-            return CaseData(**data)
+            WICHTIG: 
+            1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten.
+            2. Fahrzeuschein-Analyse (Scan/Foto): 
+               - Extrahiere Kennzeichen, Halter, VIN.
+               - Extrahiere Technische Daten: Marke/Typ (D.1/D.3), Nennleistung in KW (P.2), Erstzulassung (B).
+            3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen, Schadennummer).
+            4. Achte auf MEHRERE Kennzeichen (z.B. Anhänger).
             
-        except Exception as e:
-            logger.error(f"AI Extraction Error: {str(e)}")
-            # Return empty on error to allow manual entry later
-            return CaseData(zusammenfassung=f"Fehler bei KI-Analyse: {str(e)}")
+            E-Mail Text:
+            {text[:15000]}
+            
+            Antworte NUR mit validem JSON (ohne Markdown), das genau diesem Schema entspricht:
+            {{
+                "mandant": {{
+                    "vorname": "Vorname", "nachname": "Nachname", "anrede": "Herr/Frau",
+                    "adresse": {{ "strasse": "", "plz": "", "ort": "" }},
+                    "email": "Email", "telefon": "Tel"
+                }},
+                "gegner_versicherung": {{
+                    "name": "Name Vers.", "schadennummer": "Schadennummer",
+                     "adresse": {{ "strasse": "", "plz": "", "ort": "" }}
+                }},
+                "unfall": {{
+                    "datum": "YYYY-MM-DD", "ort": "Ort",
+                    "kennzeichen_gegner": "XX-XX-1234", 
+                    "kennzeichen_mandant": "XX-YY-5678",
+                    "weitere_kennzeichen": []
+                }},
+                "fahrzeug": {{
+                    "typ": "Marke Modell (z.B. VW Touran)",
+                    "kw": "110 (nur Zahl)",
+                    "ez": "YYYY-MM-DD"
+                }},
+                "betreff": "Betreff",
+                "zusammenfassung": "Zusammenfassung",
+                "handlungsbedarf": "Handlungsbedarf"
+            }}
+            """
+
+            # Prepare multimodal content parts
+            content_parts = [prompt_text]
+            
+            if attachments:
+                for att in attachments:
+                    content_parts.append({
+                        "mime_type": att['mime_type'],
+                        "data": att['data']
+                    })
+                    logger.info(f"Added attachment to AI context: {att.get('mime_type')}")
+
+            try:
+                response = self.model.generate_content(content_parts)
+                json_str = response.text.strip()
+                
+                # Clean up potential markdown formatting ```json ... ```
+                if json_str.startswith("```"):
+                    json_str = json_str.strip("`")
+                    if json_str.startswith("json"):
+                        json_str = json_str[4:]
+                
+                data = json.loads(json_str)
+                
+                # Log metrics
+                total_time = time.time() - start_time
+                fields_count = sum(1 for field in data.values() if field)
+                
+                logger.info(f"📊 Total Time: {total_time:.2f}s")
+                logger.info(f"📊 Provider: {provider_used}")
+                logger.info(f"📊 Fallback Triggered: {fallback_triggered}")
+                logger.info(f"✅ Gemini extraction successful ({fields_count} fields extracted)")
+                
+                return CaseData(**data)
+                
+            except Exception as e:
+                logger.error(f"AI Extraction Error: {str(e)}")
+                # Return empty on error to allow manual entry later
+                return CaseData(zusammenfassung=f"Fehler bei KI-Analyse: {str(e)}")
 
 ai_extractor = AIExtractor()

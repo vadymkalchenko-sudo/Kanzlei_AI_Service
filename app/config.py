@@ -15,9 +15,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-flash-latest"
     
-    # Loki Configuration
-    loki_url: str = "http://localhost:11434"
-    loki_model: str = "llama3"
+    # Loki Configuration (Two-Model Architecture)
+    loki_url: str = "http://10.10.10.5:11434"
+    loki_vision_model: str = "llama-vision-work"
+    loki_mapping_model: str = "hermes-work"
     
     # Backend API
     backend_url: str = "http://localhost:8000"
