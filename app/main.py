@@ -12,6 +12,7 @@ from app.config import settings
 from app.services.email_processor import email_processor
 from app.services.ai_extractor import ai_extractor
 from app.services.django_client import django_client
+from app.job_tracker import job_tracker
 
 # Configure logging
 logging.basicConfig(
@@ -64,6 +65,8 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
     Background task to process the email and create structures in Django
     """
     try:
+        # Initialize job tracking
+        job_tracker.create_job(job_id)
         logger.info(f"Job {job_id}: Starting processing for {filename}")
         
         # 1. Parse Email
@@ -71,6 +74,8 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         logger.info(f"Job {job_id}: Extracted email subject '{email_content.subject}'")
 
         # 2. Extract Data with AI
+        job_tracker.update_step(job_id, 'email_analysis', 'completed', 'E-Mail analysiert')
+        job_tracker.update_step(job_id, 'mandant_creation', 'processing', 'Mandant wird erstellt...')
         # Gather attachments for multimodal analysis
         ai_attachments = []
         supported_types = ["image/jpeg", "image/png", "image/webp", "application/pdf"]
@@ -124,6 +129,8 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         mandant_resp = await django_client.create_mandant(mandant_payload)
         mandant_id = mandant_resp['mandant_id']
         logger.info(f"Job {job_id}: Created Mandant {mandant_id}")
+        job_tracker.update_step(job_id, 'mandant_creation', 'completed', 'Mandant erstellt')
+        job_tracker.update_step(job_id, 'akte_creation', 'processing', 'Akte wird erstellt...')
 
         # 4. Lookup/Create Gegner
         gegner_name = case_data.gegner_versicherung.name
@@ -190,7 +197,10 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         }
         akte_resp = await django_client.create_akte(akte_payload)
         akte_id = akte_resp['akte_id']
-        logger.info(f"Job {job_id}: Created Akte {akte_id} ({akte_resp.get('aktenzeichen')})")
+        aktenzeichen = akte_resp.get('aktenzeichen')
+        logger.info(f"Job {job_id}: Created Akte {akte_id} ({aktenzeichen})")
+        job_tracker.update_step(job_id, 'akte_creation', 'completed', 'Akte erstellt')
+        job_tracker.update_step(job_id, 'document_upload', 'processing', 'Dokumente werden hochgeladen...')
 
         # 6. Upload Original Email
         # Use the bytes we read earlier
@@ -211,6 +221,9 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
                 titel=att.filename
             )
             logger.info(f"Job {job_id}: Uploaded attachment {att.filename}")
+        
+        job_tracker.update_step(job_id, 'document_upload', 'completed', 'Dokumente hochgeladen')
+        job_tracker.update_step(job_id, 'ticket_creation', 'processing', 'Ticket wird erstellt...')
 
         # 8. Create Ticket
         import datetime
@@ -227,11 +240,15 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         }
         await django_client.create_ticket(ticket_payload)
         logger.info(f"Job {job_id}: Created review ticket")
+        job_tracker.update_step(job_id, 'ticket_creation', 'completed', 'Ticket erstellt')
         
+        # Mark job as completed
+        job_tracker.complete_job(job_id, akte_id, aktenzeichen)
         logger.info(f"Job {job_id}: Completed successfully")
 
     except Exception as e:
         logger.error(f"Job {job_id}: Failed with error: {str(e)}")
+        job_tracker.fail_job(job_id, str(e))
 
 
 @app.post("/api/akte/create-from-email")
@@ -263,12 +280,12 @@ async def get_job_status(job_id: str):
     """
     Gibt den Status eines Jobs zurück
     """
-    # TODO: Implement real state store
-    return {
-        "job_id": job_id,
-        "status": "processing", # Mock status
-        "message": "Check logs for details"
-    }
+    job = job_tracker.get_job(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return job
 
 
 if __name__ == "__main__":
