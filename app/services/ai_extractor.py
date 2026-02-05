@@ -167,6 +167,12 @@ class AIExtractor:
                - Extrahiere Technische Daten: Marke (D.1) und Modell/Handelsbezeichnung (D.3). Achtung: Feld J (Fahrzeugklasse) ist NICHT das Modell! Nennleistung in KW (P.2), Erstzulassung (B).
             3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen, Schadennummer).
             4. Achte auf MEHRERE Kennzeichen (z.B. Anhänger).
+            5. **KRITISCH - Adressen-Trennung:**
+               - "strasse" enthält NUR den Straßennamen (z.B. "Heideweg", "Musterstraße")
+               - "hausnummer" enthält NUR die Hausnummer mit Zusätzen (z.B. "2 A", "15", "23b")
+               - Beispiel: "Heideweg 2 A" → strasse: "Heideweg", hausnummer: "2 A"
+               - Beispiel: "Musterstraße 15" → strasse: "Musterstraße", hausnummer: "15"
+               - NIEMALS die Hausnummer in "strasse" eintragen!
             
             E-Mail Text:
             {text[:15000]}
@@ -175,12 +181,12 @@ class AIExtractor:
             {{
                 "mandant": {{
                     "vorname": "Vorname", "nachname": "Nachname", "anrede": "Herr/Frau",
-                    "adresse": {{ "strasse": "Strasse", "hausnummer": "Nr", "plz": "PLZ", "ort": "Ort" }},
+                    "adresse": {{ "strasse": "Nur Straßenname", "hausnummer": "Nur Nummer+Zusatz", "plz": "PLZ", "ort": "Ort" }},
                     "email": "Email", "telefon": "Tel"
                 }},
                 "gegner_versicherung": {{
                     "name": "Name Vers.", "schadennummer": "Schadennummer",
-                     "adresse": {{ "strasse": "", "hausnummer": "", "plz": "", "ort": "" }}
+                     "adresse": {{ "strasse": "Nur Straßenname", "hausnummer": "Nur Nummer+Zusatz", "plz": "", "ort": "" }}
                 }},
                 "unfall": {{
                     "datum": "YYYY-MM-DD", "ort": "Ort",
@@ -200,7 +206,7 @@ class AIExtractor:
             
             REGELN:
             - Wenn Daten fehlen, setze null. ERFINDE NICHTS (Keine "Unbekannt" Platzhalter)!
-            - Trenne Straße und Hausnummer strikt.
+            - Trenne Straße und Hausnummer IMMER in separate Felder!
             """
 
             # Prepare multimodal content parts
