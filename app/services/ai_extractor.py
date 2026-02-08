@@ -29,7 +29,7 @@ class ExtractedAddress(BaseModel):
 class ExtractedPerson(BaseModel):
     vorname: Optional[str] = None
     nachname: Optional[str] = None
-    anrede: Optional[str] = None
+    # anrede removed - backend defaults to "Herr"
     adresse: ExtractedAddress = ExtractedAddress()
     email: Optional[str] = None
     telefon: Optional[str] = None
@@ -57,8 +57,9 @@ class CaseData(BaseModel):
     unfall: ExtractedAccident = ExtractedAccident()
     fahrzeug: ExtractedVehicle = ExtractedVehicle() # NEU: Fahrzeugdaten
     betreff: str = ""
-    zusammenfassung: str = ""
-    handlungsbedarf: str = ""
+    zusammenfassung: Optional[str] = ""
+    # handlungsbedarf removed
+
 
 class AIExtractor:
     def __init__(self):
@@ -157,13 +158,13 @@ class AIExtractor:
                 logger.info("🌐 Using Gemini (Configured)")
 
             prompt_text = f"""
-            Du bist ein juristischer Assistent. Analysiere die folgende E-Mail (inklusive Header, Signatur, Footer) UND die angehängten Bilder/Dokumente (z.B. Fahrzeugscheine, Unfallskizzen).
+            Du bist ein juristischer Assistent. Analysiere die folgende E-Mail (inklusive Header, Signatur, Footer) UND die angehängten Bilder/Dokumente.
             Extrahiere strukturierte Daten für eine neue Verkehrsrecht-Akte.
             
             WICHTIG: 
             1. Suche aktiv nach Telefonnummern und E-Mail-Adressen des Mandanten.
             2. Fahrzeuschein-Analyse (Scan/Foto): 
-               - Extrahiere Kennzeichen, Halter, VIN.
+               - Extrahiere Kennzeichen, Halter.
                - Extrahiere Technische Daten: Marke (D.1) und Modell/Handelsbezeichnung (D.3). Achtung: Feld J (Fahrzeugklasse) ist NICHT das Modell! Nennleistung in KW (P.2), Erstzulassung (B).
             3. Suche nach Unfalldaten (Datum, Ort, Kennzeichen, Schadennummer).
             4. Achte auf MEHRERE Kennzeichen (z.B. Anhänger).
@@ -180,7 +181,7 @@ class AIExtractor:
             Antworte NUR mit validem JSON (ohne Markdown), das genau diesem Schema entspricht:
             {{
                 "mandant": {{
-                    "vorname": "Vorname", "nachname": "Nachname", "anrede": "Herr/Frau",
+                    "vorname": "Vorname", "nachname": "Nachname",
                     "adresse": {{ "strasse": "Nur Straßenname", "hausnummer": "Nur Nummer+Zusatz", "plz": "PLZ", "ort": "Ort" }},
                     "email": "Email", "telefon": "Tel"
                 }},
@@ -200,12 +201,12 @@ class AIExtractor:
                     "ez": "YYYY-MM-DD"
                 }},
                 "betreff": "Betreff",
-                "zusammenfassung": "Zusammenfassung",
-                "handlungsbedarf": "Handlungsbedarf"
+                "zusammenfassung": "Zusammenfassung"
             }}
             
             REGELN:
-            - Wenn Daten fehlen, setze null. ERFINDE NICHTS (Keine "Unbekannt" Platzhalter)!
+            - Wenn Daten fehlen, lass das Feld leer (""). Sende KEINE null-Werte für Textfelder!
+            - ERFINDE NICHTS (Keine "Unbekannt" Platzhalter)!
             - Trenne Straße und Hausnummer IMMER in separate Felder!
             """
 

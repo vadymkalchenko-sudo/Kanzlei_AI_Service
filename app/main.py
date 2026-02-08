@@ -117,7 +117,7 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         mandant_payload = {
             "vorname": case_data.mandant.vorname,
             "nachname": case_data.mandant.nachname,
-            "ansprache": case_data.mandant.anrede,
+            # ansprache removed - backend uses default "Herr"
             "strasse": case_data.mandant.adresse.strasse,
             "hausnummer": case_data.mandant.adresse.hausnummer,
             "plz": case_data.mandant.adresse.plz,
