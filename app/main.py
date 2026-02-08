@@ -115,15 +115,15 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
 
         # 3. Create Mandant
         mandant_payload = {
-            "vorname": case_data.mandant.vorname,
-            "nachname": case_data.mandant.nachname,
+            "vorname": case_data.mandant.vorname or "",
+            "nachname": case_data.mandant.nachname or "",
             # ansprache removed - backend uses default "Herr"
-            "strasse": case_data.mandant.adresse.strasse,
-            "hausnummer": case_data.mandant.adresse.hausnummer,
-            "plz": case_data.mandant.adresse.plz,
-            "stadt": case_data.mandant.adresse.ort,
-            "email": case_data.mandant.email,
-            "telefon": case_data.mandant.telefon,
+            "strasse": case_data.mandant.adresse.strasse or "",
+            "hausnummer": case_data.mandant.adresse.hausnummer or "",
+            "plz": case_data.mandant.adresse.plz or "",
+            "stadt": case_data.mandant.adresse.ort or "",
+            "email": case_data.mandant.email or "",
+            "telefon": case_data.mandant.telefon or "",
             "ignore_conflicts": True 
         }
         mandant_resp = await django_client.create_mandant(mandant_payload)
