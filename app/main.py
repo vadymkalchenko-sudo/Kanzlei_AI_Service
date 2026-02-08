@@ -70,7 +70,7 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         logger.info(f"Job {job_id}: Starting processing for {filename}")
         
         # 1. Parse Email
-        email_content = await email_processor.process_eml(email_content_bytes)
+        email_content = await email_processor.process_email(email_content_bytes, filename)
         logger.info(f"Job {job_id}: Extracted email subject '{email_content.subject}'")
 
         # 2. Extract Data with AI
