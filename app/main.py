@@ -1,13 +1,19 @@
 """
 FastAPI Main Application — Kanzlei AI Service
 """
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any
 import logging
+import uuid
+import asyncio
 
 from app.config import settings
+from app.services.email_processor import email_processor
+from app.services.ai_extractor import ai_extractor
+from app.services.django_client import django_client
+from app.job_tracker import job_tracker
 
 # Configure logging
 logging.basicConfig(
@@ -119,14 +125,6 @@ async def health_check():
 async def vorlagen_suggest(request: VorlagenSuggestRequest):
     """
     KI-Baustein-Empfehlung für Erstanschreiben.
-    
-    - Analysiert fragebogen_data.schadenshergang via Gemini
-    - Erkennt Unfalltyp (Auffahrunfall, Parkschaden, etc.)
-    - Empfiehlt passende Bausteine aus der übergebenen Liste
-    - Bedingte Blöcke werden deterministisch berechnet (kein LLM)
-    
-    POST /api/vorlagen/suggest
-    Body: VorlagenSuggestRequest
     """
     try:
         from app.services.vorlagen_suggest_service import erstelle_suggest_antwort
@@ -136,10 +134,7 @@ async def vorlagen_suggest(request: VorlagenSuggestRequest):
             f"schadenshergang_len={len(request.fragebogen_data.get('schadenshergang', ''))}"
         )
 
-        # Bausteine als einfache Dicts
         bausteine_dicts = [b.dict() for b in request.verfuegbare_bausteine]
-
-        # Gemini-Client (None wenn kein Key konfiguriert → Keyword-Fallback)
         gemini = get_gemini_client()
 
         ergebnis = await erstelle_suggest_antwort(
@@ -163,37 +158,228 @@ async def vorlagen_suggest(request: VorlagenSuggestRequest):
             status_code=500,
             detail=f"KI-Analyse fehlgeschlagen: {str(e)}"
         )
+async def process_email_background_task(job_id: str, email_content_bytes: bytes, filename: str):
+    """
+    Background task to process the email and create structures in Django
+    """
+    try:
+        # Initialize job tracking
+        job_tracker.create_job(job_id)
+        logger.info(f"Job {job_id}: Starting processing for {filename}")
+        
+        # 1. Parse Email
+        email_content = await email_processor.process_email(email_content_bytes, filename)
+        logger.info(f"Job {job_id}: Extracted email subject '{email_content.subject}'")
+
+        # 2. Extract Data with AI
+        job_tracker.update_step(job_id, 'email_analysis', 'completed', 'E-Mail analysiert')
+        job_tracker.update_step(job_id, 'mandant_creation', 'processing', 'Mandant wird erstellt...')
+        # Gather attachments for multimodal analysis
+        ai_attachments = []
+        supported_types = ["image/jpeg", "image/png", "image/webp", "application/pdf"]
+        
+        for att in email_content.attachments:
+            # Simple mime type check - can be improved
+            is_supported = False
+            mime = "application/octet-stream" 
+            
+            if att.filename.lower().endswith(('.jpg', '.jpeg')):
+                mime = "image/jpeg"
+                is_supported = True
+            elif att.filename.lower().endswith('.png'):
+                mime = "image/png"
+                is_supported = True
+            elif att.filename.lower().endswith('.webp'):
+                mime = "image/webp"
+                is_supported = True
+            elif att.filename.lower().endswith('.pdf'):
+                mime = "application/pdf"
+                is_supported = True
+                
+            if is_supported:
+                ai_attachments.append({
+                    "mime_type": mime,
+                    "data": att.content
+                })
+        
+        # Combine subject + body
+        full_text = f"Betreff: {email_content.subject}\n\n{email_content.body}"
+        
+        # Call AI with text AND images
+        case_data = await ai_extractor.extract_case_data(full_text, attachments=ai_attachments)
+        logger.info(f"Job {job_id}: AI Extraction complete (with {len(ai_attachments)} attachments)")
+
+        # ... (Mappings remain same) ...
+
+        # 3. Create Mandant
+        mandant_payload = {
+            "vorname": case_data.mandant.vorname or "",
+            "nachname": case_data.mandant.nachname or "",
+            # ansprache removed - backend uses default "Herr"
+            "strasse": case_data.mandant.adresse.strasse or "",
+            "hausnummer": case_data.mandant.adresse.hausnummer or "",
+            "plz": case_data.mandant.adresse.plz or "",
+            "stadt": case_data.mandant.adresse.ort or "",
+            "email": case_data.mandant.email or "",
+            "telefon": case_data.mandant.telefon or "",
+            "ignore_conflicts": True 
+        }
+        mandant_resp = await django_client.create_mandant(mandant_payload)
+        mandant_id = mandant_resp['mandant_id']
+        logger.info(f"Job {job_id}: Created Mandant {mandant_id}")
+        job_tracker.update_step(job_id, 'mandant_creation', 'completed', 'Mandant erstellt')
+        job_tracker.update_step(job_id, 'akte_creation', 'processing', 'Akte wird erstellt...')
+
+        # 4. Lookup/Create Gegner
+        gegner_name = case_data.gegner_versicherung.name
+        if not gegner_name or not gegner_name.strip():
+            gegner_name = "Unbekannte Versicherung"
+
+        # Handle missing address (Versicherung kann unbekannt sein)
+        if case_data.gegner_versicherung.adresse:
+            gegner_strasse = case_data.gegner_versicherung.adresse.strasse or ""
+            gegner_hausnummer = case_data.gegner_versicherung.adresse.hausnummer or ""
+            gegner_plz = case_data.gegner_versicherung.adresse.plz or ""
+            gegner_stadt = case_data.gegner_versicherung.adresse.ort or ""
+        else:
+            gegner_strasse = ""
+            gegner_hausnummer = ""
+            gegner_plz = ""
+            gegner_stadt = ""
+
+        gegner_payload = {
+            "name": gegner_name,
+            "strasse": gegner_strasse,
+            "hausnummer": gegner_hausnummer,
+            "plz": gegner_plz,
+            "stadt": gegner_stadt,
+            "ignore_conflicts": True
+        }
+        gegner_resp = await django_client.lookup_or_create_gegner(gegner_payload)
+        gegner_id = gegner_resp['gegner_id']
+        logger.info(f"Job {job_id}: Resolved Gegner {gegner_id}")
+
+        # 5. Create Akte
+        akte_payload = {
+            "mandant": mandant_id,
+            "gegner": gegner_id,
+            "info_zusatz": {
+                "betreff": case_data.betreff,
+                "unfalldatum": case_data.unfall.datum,
+                "unfallort": case_data.unfall.ort,
+                "kennzeichen_gegner": case_data.unfall.kennzeichen_gegner,
+                "kennzeichen_mandant": case_data.unfall.kennzeichen_mandant,
+                "weitere_kennzeichen": case_data.unfall.weitere_kennzeichen,
+                "versicherungsnummer": case_data.gegner_versicherung.schadennummer,
+                "zusammenfassung": case_data.zusammenfassung
+            },
+            "fragebogen_data": {
+                # Mapping auf flache Frontend-Struktur (FragebogenData interface)
+                "datum_zeit": case_data.unfall.datum,
+                "unfallort": case_data.unfall.ort,
+                "kfz_kennzeichen": case_data.unfall.kennzeichen_mandant,
+                
+                "vers_gegner": case_data.gegner_versicherung.name,
+                "gegner_kfz": case_data.unfall.kennzeichen_gegner,
+                "schaden_nr": case_data.gegner_versicherung.schadennummer,
+                
+                # Neue Fahrzeugdaten
+                "kfz_typ": case_data.fahrzeug.typ,
+                "kfz_kw_ps": case_data.fahrzeug.kw,
+                "kfz_ez": case_data.fahrzeug.ez,
+                
+                # Defaults
+                "polizei": False,
+                "zeugen": False
+            }
+        }
+        akte_resp = await django_client.create_akte(akte_payload)
+        akte_id = akte_resp['akte_id']
+        aktenzeichen = akte_resp.get('aktenzeichen')
+        logger.info(f"Job {job_id}: Created Akte {akte_id} ({aktenzeichen})")
+        job_tracker.update_step(job_id, 'akte_creation', 'completed', 'Akte erstellt')
+        job_tracker.update_step(job_id, 'document_upload', 'processing', 'Dokumente werden hochgeladen...')
+
+        # 6. Upload Original Email
+        # Use the bytes we read earlier
+        await django_client.upload_dokument(
+            akte_id=akte_id, 
+            file_content=email_content_bytes, 
+            filename=filename or "email.eml",
+            titel="Original E-Mail"
+        )
+        logger.info(f"Job {job_id}: Uploaded email file")
+        
+        # 7. Upload Attachments
+        for att in email_content.attachments:
+            await django_client.upload_dokument(
+                akte_id=akte_id, 
+                file_content=att.content, 
+                filename=att.filename,
+                titel=att.filename
+            )
+            logger.info(f"Job {job_id}: Uploaded attachment {att.filename}")
+        
+        job_tracker.update_step(job_id, 'document_upload', 'completed', 'Dokumente hochgeladen')
+        job_tracker.update_step(job_id, 'ticket_creation', 'processing', 'Ticket wird erstellt...')
+
+        # 8. Create Ticket
+        import datetime
+        ticket_payload = {
+            "akte": akte_id,
+            "titel": "KI: Neue Akte aus E-Mail",
+            "beschreibung": (
+                f"Automatisch angelegt aus E-Mail '{email_content.subject}'.\n"
+                f"Mandant: {case_data.mandant.vorname} {case_data.mandant.nachname}\n"
+                f"Versicherung: {case_data.gegner_versicherung.name}\n"
+                f"Bitte Daten prüfen und vervollständigen."
+            ),
+            "faellig_am": datetime.date.today().isoformat()
+        }
+        await django_client.create_ticket(ticket_payload)
+        logger.info(f"Job {job_id}: Created review ticket")
+        job_tracker.update_step(job_id, 'ticket_creation', 'completed', 'Ticket erstellt')
+        
+        # Mark job as completed
+        job_tracker.complete_job(job_id, akte_id, aktenzeichen)
+        logger.info(f"Job {job_id}: Completed successfully")
+
+    except Exception as e:
+        logger.error(f"Job {job_id}: Failed with error: {str(e)}")
+        job_tracker.fail_job(job_id, str(e))
 
 
 @app.post("/api/akte/create-from-email")
 async def create_akte_from_email(
+    background_tasks: BackgroundTasks,
     email_file: UploadFile = File(...),
-    attachments: List[UploadFile] = File(default=[])
 ):
     """
-    Erstellt eine neue Akte aus E-Mail und Anhängen.
-    TODO: Vollständige Implementierung
+    Erstellt eine neue Akte aus E-Mail und Anhängen via Background Task
     """
-    try:
-        logger.info(f"E-Mail empfangen: {email_file.filename}, Anhänge: {len(attachments)}")
-        return {
-            "status": "processing",
-            "job_id": "placeholder-123",
-            "message": "E-Mail-Verarbeitung noch nicht vollständig implementiert"
-        }
-    except Exception as e:
-        logger.error(f"Fehler bei E-Mail-Verarbeitung: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/job/{job_id}")
-async def get_job_status(job_id: str):
-    """Job-Status abfragen (TODO: echtes Job-Tracking)"""
+    job_id = str(uuid.uuid4())
+    
+    # Read file content immediately to avoid "closed file" in background task
+    content = await email_file.read()
+    filename = email_file.filename
+    
+    # Start processing in background with bytes
+    background_tasks.add_task(process_email_background_task, job_id, content, filename)
+    
     return {
+        "status": "accepted",
         "job_id": job_id,
-        "status": "pending",
-        "message": "Job-Tracking noch nicht implementiert"
+        "message": "E-Mail wird verarbeitet. Akte wird im Hintergrund erstellt."
     }
+    """
+    Gibt den Status eines Jobs zurück
+    """
+    job = job_tracker.get_job(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return job
 
 
 if __name__ == "__main__":
