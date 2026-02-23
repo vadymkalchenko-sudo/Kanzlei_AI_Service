@@ -158,6 +158,225 @@ async def vorlagen_suggest(request: VorlagenSuggestRequest):
             status_code=500,
             detail=f"KI-Analyse fehlgeschlagen: {str(e)}"
         )
+
+
+class RagIngestRequest(BaseModel):
+    """Daten für das Hinzufügen eines Textes in den RAG Speicher"""
+    text: str
+    metadata: dict  # z.B. {"fall_typ": "Auffahrunfall", "akte": "Muster-123"}
+    chunk_size: int = 1000  # Zeichen pro Chunk
+
+
+@app.post("/api/rag/ingest")
+async def rag_ingest_document(request: RagIngestRequest):
+    """
+    Speichert einen Text (z.B. ein erfolgreiches Kanzleischreiben) im ChromaDB Vektor-Store.
+    Der Text wird vorher in Chunks zerteilt.
+    """
+    try:
+        from app.services.rag_store import rag_store
+        
+        # 1. Simples Chunking (basierend auf Zeichenanzahl und Absätzen)
+        # TODO: Später kann dies auf token-basiertes Chunking umgestellt werden
+        raw_text = request.text.strip()
+        if not raw_text:
+            raise HTTPException(status_code=400, detail="Kein Text zum Speichern übergeben.")
+            
+        chunks = []
+        # Teile zuerst am doppelten Zeilenumbruch (Absätze)
+        paragraphs = raw_text.split("\n\n")
+        
+        current_chunk = ""
+        for p in paragraphs:
+            if len(current_chunk) + len(p) < request.chunk_size:
+                current_chunk += p + "\n\n"
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = p + "\n\n"
+                
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+            
+        # 2. Speichere im RAG Store
+        # Generiere eindeutige IDs für jeden Chunk
+        base_uuid = str(uuid.uuid4())
+        base_id = base_uuid[:8]
+        ids = [f"doc_{base_id}_chunk_{i}" for i in range(len(chunks))]
+        # Gleiche Metadaten für alle Chunks dieses Dokuments
+        metadatas = [request.metadata.copy() for _ in range(len(chunks))]
+        
+        success = await rag_store.add_documents(
+            documents=chunks,
+            metadatas=metadatas,
+            ids=ids
+        )
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Fehler beim Speichern in ChromaDB")
+            
+        logger.info(f"RAG Ingest erfolgreich: {len(chunks)} Chunks erstellt für {request.metadata.get('fall_typ', 'Unbekannt')}")
+        
+        return {
+            "status": "success",
+            "chunks_created": len(chunks),
+            "document_id": base_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Fehler in rag_ingest: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Injektion in RAG Store fehlgeschlagen: {str(e)}"
+        )
+
+
+class RagSearchRequest(BaseModel):
+    """Daten für die RAG Suche nach Referenzschreiben"""
+    query: str
+    fall_typ: Optional[str] = None  # Optionaler Filter
+    k_results: int = 3
+
+
+@app.post("/api/rag/search")
+async def rag_search_documents(request: RagSearchRequest):
+    """
+    Sucht in der lokalen ChromaDB nach den ähnlichsten Text-Chunks.
+    Wird vom Prompt-Builder genutzt, um "Context" in den LLM-Call zu injizieren.
+    """
+    try:
+        from app.services.rag_store import rag_store
+        
+        filter_dict = None
+        if request.fall_typ:
+            filter_dict = {"fall_typ": request.fall_typ}
+            
+        matches = rag_store.search_similar(
+            query_text=request.query,
+            n_results=request.k_results,
+            filter_dict=filter_dict
+        )
+        
+        return {
+            "status": "success",
+            "matches": matches
+        }
+    except Exception as e:
+        logger.error(f"Fehler in rag_search: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fehler bei der semantischen Suche: {str(e)}"
+        )
+
+
+class RagDraftRequest(BaseModel):
+    """Daten für die Generierung eines Briefentwurfs via Orchestrator"""
+    fall_daten: dict
+    notizen: str
+    fall_typ: Optional[str] = None
+
+
+@app.post("/api/rag/draft")
+async def rag_generate_draft(request: RagDraftRequest):
+    """
+    Kombiniert RAG-Wissen mit einem LLM-Aufruf, um einen echten Brief zu entwerfen.
+    """
+    try:
+        from app.services.rag_store import rag_store
+        from app.services.orchestrator import orchestrator_service
+        
+        # 1. Sammle Kontext (Ähnliche Fälle)
+        filter_dict = {"fall_typ": request.fall_typ} if request.fall_typ else None
+        
+        # Erzeuge einen Suchstring aus Notizen + relevanten Falldaten
+        query_parts = [request.notizen]
+        if "schadenshergang" in request.fall_daten:
+            query_parts.append(request.fall_daten["schadenshergang"])
+            
+        search_query = " ".join(query_parts)
+        
+        matches = rag_store.search_similar(
+            query_text=search_query,
+            n_results=3,
+            filter_dict=filter_dict
+        )
+        
+        # 2. Generiere den Briefentwurf (Super-Prompt)
+        draft_text = await orchestrator_service.generate_draft(
+            fall_daten=request.fall_daten,
+            notizen=request.notizen,
+            rag_context=matches
+        )
+        
+        return {
+            "status": "success",
+            "draft_text": draft_text,
+            "rag_matches_used": len(matches)
+        }
+    except Exception as e:
+        logger.error(f"Fehler in rag_draft: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fehler bei der Briefgenerierung: {str(e)}"
+        )
+
+
+@app.get("/api/rag/stats")
+async def rag_get_stats():
+    """
+    Liefert Statistiken (Anzahl Dokumente, Sättigung) über die RAG-Wissensdatenbank.
+    """
+    try:
+        from app.services.rag_store import rag_store
+        stats = rag_store.get_stats()
+        
+        if stats.get("status") == "error":
+            raise HTTPException(status_code=500, detail=stats.get("message", "Fehler beim Lesen der Stats"))
+            
+        return stats
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Fehler in rag_stats: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Konnte RAG Statistiken nicht laden: {str(e)}"
+        )
+
+
+@app.delete("/api/rag/delete/{document_id}")
+async def rag_delete_document(document_id: str):
+    """
+    Löscht ein bestimmtes Dokument (und alle seine Chunks) aus dem RAG Speicher.
+    """
+    try:
+        from app.services.rag_store import rag_store
+        
+        # Validierung (Basisschutz)
+        if not document_id or len(document_id) < 4:
+             raise HTTPException(status_code=400, detail="Ungültige Document-ID")
+             
+        success = rag_store.delete_document(document_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Fehler beim Löschen im RAG Store")
+            
+        return {
+            "status": "success",
+            "deleted_document": document_id,
+            "message": f"Dokument {document_id} erfolgreich aus dem KI-Wissen entfernt."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Fehler in rag_delete: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Löschvorgang fehlgeschlagen: {str(e)}"
+        )
+
 async def process_email_background_task(job_id: str, email_content_bytes: bytes, filename: str):
     """
     Background task to process the email and create structures in Django
