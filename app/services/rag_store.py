@@ -41,7 +41,7 @@ class RAGStore:
             logger.error(f"✗ Fehler bei ChromaDB Initialisierung: {e}")
             self._client = None
 
-    def add_documents(self, documents: List[str], metadatas: List[Dict[str, Any]], ids: List[str]):
+    async def add_documents(self, documents: List[str], metadatas: List[Dict[str, Any]], ids: List[str]):
         """
         Fügt Text-Chunks zur Vektordatenbank hinzu.
         
