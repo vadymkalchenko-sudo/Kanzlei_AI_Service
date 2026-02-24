@@ -1,7 +1,7 @@
 """
 FastAPI Main Application — Kanzlei AI Service
 """
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any
@@ -164,7 +164,52 @@ class RagIngestRequest(BaseModel):
     """Daten für das Hinzufügen eines Textes in den RAG Speicher"""
     text: str
     metadata: dict  # z.B. {"fall_typ": "Auffahrunfall", "akte": "Muster-123"}
-    chunk_size: int = 1000  # Zeichen pro Chunk
+    chunk_size: int = 500  # Zeichen pro Chunk für granularere Bausteine
+
+def _chunk_text(raw_text: str, chunk_size: int = 500) -> list[str]:
+    """Zerteilt Text in Chunks (Bausteine)"""
+    if not raw_text:
+        return []
+        
+    chunks = []
+    # Bei PDFs gibt es oft nur einfache Zeilenumbrüche (\n), keine \n\n
+    separator = "\n\n" if "\n\n" in raw_text else "\n"
+    parts = raw_text.split(separator)
+    
+    current_chunk = ""
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+            
+        if len(current_chunk) + len(p) + 2 < chunk_size:
+            current_chunk += p + "  "
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = p + "  "
+            
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    
+    # Fallback: Falls ein einzelner Block immer noch viel zu riesig ist (> chunk_size + 200)
+    final_chunks = []
+    for c in chunks:
+        if len(c) > chunk_size + 200:
+            words = c.split()
+            curr = ""
+            for w in words:
+                if len(curr) + len(w) < chunk_size:
+                    curr += w + " "
+                else:
+                    final_chunks.append(curr.strip())
+                    curr = w + " "
+            if curr:
+                 final_chunks.append(curr.strip())
+        else:
+            final_chunks.append(c)
+             
+    return final_chunks
 
 
 @app.post("/api/rag/ingest")
@@ -182,29 +227,19 @@ async def rag_ingest_document(request: RagIngestRequest):
         if not raw_text:
             raise HTTPException(status_code=400, detail="Kein Text zum Speichern übergeben.")
             
-        chunks = []
-        # Teile zuerst am doppelten Zeilenumbruch (Absätze)
-        paragraphs = raw_text.split("\n\n")
+        chunks = _chunk_text(raw_text, request.chunk_size)
         
-        current_chunk = ""
-        for p in paragraphs:
-            if len(current_chunk) + len(p) < request.chunk_size:
-                current_chunk += p + "\n\n"
-            else:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                current_chunk = p + "\n\n"
-                
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-            
         # 2. Speichere im RAG Store
-        # Generiere eindeutige IDs für jeden Chunk
         base_uuid = str(uuid.uuid4())
         base_id = base_uuid[:8]
         ids = [f"doc_{base_id}_chunk_{i}" for i in range(len(chunks))]
-        # Gleiche Metadaten für alle Chunks dieses Dokuments
-        metadatas = [request.metadata.copy() for _ in range(len(chunks))]
+        
+        # WICHTIG: document_id muss in metadaten für die Stats in rag_store.py sein!
+        metadatas = []
+        for _ in chunks:
+            m = request.metadata.copy()
+            m["document_id"] = base_id
+            metadatas.append(m)
         
         success = await rag_store.add_documents(
             documents=chunks,
@@ -376,6 +411,104 @@ async def rag_delete_document(document_id: str):
             status_code=500,
             detail=f"Löschvorgang fehlgeschlagen: {str(e)}"
         )
+
+
+@app.post("/api/rag/ingest/file")
+async def rag_ingest_file(
+    file: UploadFile = File(...),
+    fall_typ: str = Form(""),
+    notizen: str = Form(""),
+    chunk_size: int = Form(500)
+):
+    """
+    Nimmt eine hochgeladene Datei (PDF, DOCX, TXT) entgegen,
+    extrahiert den Text und fügt ihn dem RAG Store hinzu.
+    """
+    try:
+        from app.services.rag_store import rag_store
+        from app.services.ai_file_extractor import FileExtractor
+        
+        # 1. Text extrahieren
+        extracted_text = await FileExtractor.extract_text(file)
+        
+        if not extracted_text or len(extracted_text.strip()) < 10:
+            raise HTTPException(status_code=400, detail="Konnte keinen relevanten Text aus der Datei extrahieren.")
+            
+        # 1.5 Text in Chunks schneiden
+        chunks = _chunk_text(extracted_text.strip(), chunk_size)
+        
+        if not chunks:
+            raise HTTPException(status_code=400, detail="Text konnte nicht erfolgreich in Chunks zerteilt werden.")
+        
+        # 2. Metadaten vorbereiten
+        base_uuid = str(uuid.uuid4())
+        base_id = base_uuid[:8]
+        
+        metadatas = []
+        for _ in chunks:
+            m = {
+                "source": file.filename,
+                "fall_typ": fall_typ,
+                "notizen": notizen,
+                "document_id": base_id
+            }
+            metadatas.append(m)
+            
+        ids = [f"doc_{base_id}_chunk_{i}" for i in range(len(chunks))]
+        
+        # 3. Zum RAG Store hinzufügen
+        status = await rag_store.add_documents(
+            documents=chunks,
+            metadatas=metadatas,
+            ids=ids
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Datei {file.filename} erfolgreich als {len(chunks)} Chunks zu Lokis Wissen hinzugefügt.",
+            "chunk_count": len(chunks) if status else 0
+        }
+        
+    except ValueError as ve:
+         raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Fehler bei Datei RAG Ingest: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fehler beim Verarbeiten der Datei: {str(e)}"
+        )
+
+
+@app.delete("/api/rag/delete/{document_id}")
+async def rag_delete_document(document_id: str):
+    """
+    Löscht alle Chunks für eine bestimmte document_id aus dem RAG Store.
+    """
+    try:
+        from app.services.rag_store import rag_store
+        
+        if not document_id:
+            raise HTTPException(status_code=400, detail="Keine document_id angegeben.")
+            
+        success = rag_store.delete_document(document_id)
+        
+        if not success:
+             raise HTTPException(status_code=500, detail="Fehler beim Löschen des Dokuments aus ChromaDB.")
+             
+        return {
+            "status": "success",
+            "message": f"Dokument {document_id} erfolgreich gelöscht."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Fehler beim RAG Delete: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fehler beim Löschen des Dokuments: {str(e)}"
+        )
+
 
 async def process_email_background_task(job_id: str, email_content_bytes: bytes, filename: str):
     """

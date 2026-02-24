@@ -185,6 +185,7 @@ class RAGStore:
             
             categories = {}
             unique_docs = set()
+            documents_map = {}
             
             if metadatas:
                 for meta in metadatas:
@@ -195,9 +196,18 @@ class RAGStore:
                     # Da ein echtes Word-Dokument in z.B. 5 Chunks zerlegt wird,
                     # gucken wir, wie viele "echte" Dokuemnte es gibt (nach document_id)
                     doc_id = meta.get("document_id", "unknown")
-                    unique_docs.add(doc_id)
+                    if doc_id != "unknown":
+                        unique_docs.add(doc_id)
+                        if doc_id not in documents_map:
+                            documents_map[doc_id] = {
+                                "id": doc_id,
+                                "source": meta.get("source", "Manuelle Texteingabe"),
+                                "fall_typ": cat,
+                                "notizen": meta.get("notizen", ""),
+                                "chunk_count": 0
+                            }
+                        documents_map[doc_id]["chunk_count"] += 1
                     
-            unique_docs.discard("unknown")
             real_doc_count = len(unique_docs)
             
             # Füllstand der "Tank-Nadel" (Ziel: 100 Goldstandard-Dokumente)
@@ -210,7 +220,8 @@ class RAGStore:
                 "document_count": real_doc_count,
                 "categories": categories,
                 "saturation_percent": saturation,
-                "target_docs": TARGET_DOCS
+                "target_docs": TARGET_DOCS,
+                "documents": list(documents_map.values())
             }
         except Exception as e:
             logger.error(f"Fehler beim Lesen der RAG Stats: {e}")
