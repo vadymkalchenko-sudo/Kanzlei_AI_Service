@@ -736,9 +736,25 @@ async def create_akte_from_email(
 
 if __name__ == "__main__":
     import uvicorn
+    import platform
+    import subprocess
+    import time
+    
+    port = settings.service_port
+    
+    # Automatisch blockierende Prozesse auf dem Port killen (speziell für Windows/Entwicklung)
+    if platform.system() == "Windows":
+        try:
+            print(f"Prüfe auf verwaiste Prozesse auf Port {port}...")
+            cmd = f'powershell -Command "$pid_to_kill = (Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue).OwningProcess; if ($pid_to_kill) {{ Stop-Process -Id $pid_to_kill -Force; Write-Host \'Port {port} freigegeben.\' }}"'
+            subprocess.run(cmd, shell=True, capture_output=True)
+            time.sleep(1)
+        except Exception as e:
+            print(f"Fehler beim Freigeben von Port {port}: {e}")
+
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=settings.service_port,
+        port=port,
         reload=settings.debug
     )
