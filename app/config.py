@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     # Loki Configuration (Hybrid Two-Model Architecture)
     loki_url: str = "http://10.10.10.5:11434"
+    loki_model: str = "llama3"
     loki_vision_model: str = "llama-vision-work"
     loki_mapping_model: str = "qwen-work"
 
