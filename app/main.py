@@ -13,6 +13,7 @@ from app.config import settings
 from app.services.email_processor import email_processor
 from app.services.ai_extractor import ai_extractor
 from app.services.django_client import django_client
+from app.services.query_service import query_service
 from app.job_tracker import job_tracker
 
 # Configure logging
@@ -732,6 +733,46 @@ async def create_akte_from_email(
         raise HTTPException(status_code=404, detail="Job not found")
     
     return job
+
+
+class QueryRequest(BaseModel):
+    """Request-Modell für POST /api/query/"""
+    query: str
+    user_id: Optional[int] = None
+
+
+@app.post("/api/query/")
+async def handle_query(request: QueryRequest):
+    """
+    MCP-Sekretärin: Freitext → Gemini Function Calling → Django-Daten → formatiertes Ergebnis.
+
+    Wird vom Django Orchestrator (POST /api/orchestrator/query/) aufgerufen.
+
+    Request Body:
+        { "query": "Zeig mir alle offenen Beträge im März", "user_id": 1 }
+
+    Response:
+        {
+            "status": "ok",
+            "result_type": "table" | "number" | "text",
+            "columns": [...],       # nur bei table
+            "data": [...],          # Zeilen (table), Zahl (number) oder Text
+            "total": 42,            # optional (Summe oder Anzahl)
+            "query_used": "get_offene_betraege"
+        }
+    """
+    try:
+        result = await query_service.handle_query(
+            query=request.query,
+            user_id=request.user_id or 0,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Fehler in /api/query/: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Query-Verarbeitung fehlgeschlagen: {str(e)}"
+        )
 
 
 if __name__ == "__main__":
