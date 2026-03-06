@@ -223,6 +223,66 @@ TOOL_DECLARATIONS: List[Dict] = [
             "required": ["user_kontext"],
         },
     },
+    {
+        "name": "sync_frist_zu_calendar",
+        "description": (
+            "Synchronisiert eine Frist oder Aufgabe in Google Calendar. "
+            "Wenn der User sagt: 'Leg die Frist in den Kalender' oder "
+            "'Widerspruchsfrist am 15.04. eintragen'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "akte_id": {
+                    "type": "integer",
+                    "description": "ID der Akte"
+                },
+                "titel": {
+                    "type": "string",
+                    "description": "Titel, z.B. 'Widerspruchsfrist'"
+                },
+                "datum": {
+                    "type": "string",
+                    "description": "Datum im Format YYYY-MM-DD"
+                },
+                "beschreibung": {
+                    "type": "string",
+                    "description": "Optionale Beschreibung"
+                },
+            },
+            "required": ["akte_id", "titel", "datum"],
+        }
+    },
+    {
+        "name": "sende_email_an_gegner",
+        "description": (
+            "Sendet eine E-Mail an den Gegner (z.B. Versicherung) der aktuellen Akte. "
+            "Wenn der User sagt: 'Schick das an die Allianz' oder "
+            "'E-Mail an den Gegner mit dem Widerspruch'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "akte_id": {
+                    "type": "integer",
+                    "description": "ID der Akte"
+                },
+                "betreff": {
+                    "type": "string",
+                    "description": "E-Mail-Betreff"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "E-Mail-Text (Fliesstext)"
+                },
+                "dokument_id": {
+                    "type": "integer",
+                    "description": "Optional: ID des anzuhängenden Dokuments"
+                },
+            },
+            "required": ["akte_id", "betreff", "text"],
+        }
+    }
 ]
 
 
@@ -248,7 +308,7 @@ class QueryService:
             "Content-Type": "application/json",
         }
 
-    async def handle_query(self, query: str, user_id: int) -> Dict[str, Any]:
+    async def handle_query(self, query: str, user_id: int, akte_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Haupteinstiegspunkt: Freitext → Gemini → Tool-Call → Django → formatiertes Ergebnis.
         """
@@ -269,12 +329,18 @@ class QueryService:
         logger.info(f"Gemini wählte Tool: {tool_name}, Args: {tool_args}")
 
         # 2. Django-Endpoint aufrufen
-        raw_data = await self._execute_tool(tool_name, tool_args)
+        raw_data = await self._execute_tool(tool_name, tool_args, akte_id)
 
         if raw_data is None:
             return {
                 "status": "error",
                 "error": f"Datenbankabfrage für '{tool_name}' fehlgeschlagen.",
+            }
+
+        if not isinstance(raw_data, dict) and not isinstance(raw_data, list):
+            return {
+                "status": "error",
+                "error": f"Ungültiges Rückgabeformat für '{tool_name}'.",
             }
 
         # 3. Ergebnis für Frontend aufbereiten
@@ -404,7 +470,7 @@ class QueryService:
     # Tool-Dispatch → Django /api/ai/query/* Endpoints
     # -----------------------------------------------------------------------
 
-    async def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Optional[Any]:
+    async def _execute_tool(self, tool_name: str, args: Dict[str, Any], akte_id: Optional[int] = None) -> Optional[Any]:
         """Routet den Tool-Call zum passenden Django-Endpoint."""
         tool_map = {
             "get_akten_liste": self._get_akten_liste,
@@ -417,6 +483,8 @@ class QueryService:
             "get_akten_ohne_dokument": self._get_akten_ohne_dokument,
             "get_akten_by_gegner": self._get_akten_by_gegner,
             "erstelle_brief_aus_kontext": self._erstelle_brief_aus_kontext,
+            "sync_frist_zu_calendar": self._sync_frist_zu_calendar,
+            "sende_email_an_gegner": self._sende_email_an_gegner,
         }
 
         handler = tool_map.get(tool_name)
@@ -425,6 +493,17 @@ class QueryService:
             return None
 
         try:
+            if tool_name == "erstelle_brief_aus_kontext":
+                # Empfänger und Notizen optional durchschleifen, wenn sie im Request sind
+                empfaenger = args.pop('empfaenger', 'versicherung')
+                notizen = args.pop('notizen', '')
+                return await handler(
+                    user_kontext=args.get('user_kontext', ''),
+                    schreiben_typ=args.get('schreiben_typ'),
+                    akte_id=akte_id,
+                    empfaenger=empfaenger,
+                    notizen=notizen
+                )
             return await handler(**args)
         except Exception as e:
             logger.error(f"Tool-Ausführung fehlgeschlagen ({tool_name}): {e}")
@@ -505,41 +584,160 @@ class QueryService:
         if jahr: params["jahr"] = jahr
         return await self._get("akten_by_empfehlung/", params)
 
-    async def _erstelle_brief_aus_kontext(self, user_kontext: str, schreiben_typ: str = None):
+    async def _erstelle_brief_aus_kontext(
+        self, 
+        user_kontext: str, 
+        schreiben_typ: str = None, 
+        akte_id: int = None,
+        empfaenger: str = 'versicherung',
+        notizen: str = ''
+    ):
         """
         N-G2 Tool Handler: Generiert einen Brief-Rohtext direkt hier im AI-Service.
+        Erweitert um Akte-Daten via RAG.
         """
         from app.main import get_gemini_client
         gemini = get_gemini_client()
         if not gemini:
             return {"error": "Gemini API nicht bereit", "brief_text": "Lokale Generierung nicht möglich."}
+        
+        akte_context = ""
+        rag_context = ""
+
+        if akte_id:
+            try:
+                akte_data = await self._get("akte_by_id/", {"akte_id": akte_id})
+                akte_context = (
+                    f"Akte-Details:\n"
+                    f"Aktenzeichen: {akte_data.get('aktenzeichen')}\n"
+                    f"Mandant: {akte_data.get('mandant')}\n"
+                    f"Gegner: {akte_data.get('gegner')}\n"
+                    f"Unfallort: {akte_data.get('unfallort', getattr(akte_data, 'unfallort', ''))}\n"
+                )
+            except Exception as e:
+                logger.warning(f"Konnte Akte {akte_id} Context nicht laden: {e}")
+
+            try:
+                from app.services.rag_store import rag_store
+                matches = await rag_store.search_similar(user_kontext, n_results=3, collection_name="muster_schreiben")
+                if matches:
+                    muster_texts = [m.get("text", "") for m in matches]
+                    rag_context = "Hier sind ähnliche Muster-Schreiben als Stil-Referenz:\n" + "\n---\n".join(muster_texts)
+            except Exception as e:
+                logger.warning(f"RAG-Suche in muster_schreiben fehlgeschlagen: {e}")
             
         system_instruction = (
             "Du bist ein erfahrener Rechtsanwalt. Formuliere einen professionellen "
             "Brieftext basierend auf dem vom Benutzer bereitgestellten Kontext.\n\n"
-            "WICHTIG: Generiere NUR den Inhalt (Fließtext).\n"
-            "KEIN Briefkopf, KEINE Anrede, KEIN 'Mit freundlichen Grüßen', KEINE Signatur.\n"
-            "Beginne direkt mit dem ersten inhaltlichen Absatz.\n"
+            "WICHTIG: Generiere NUR den Brieftext ab der Anrede ('Sehr geehrte...') bis zur Grußformel.\n"
+            "KEIN Briefkopf, KEINE Adresse, KEIN Datum, KEIN Aktenzeichen am Anfang.\n"
+            "Der Briefkopf wird vom System automatisch eingefügt.\n"
             "Halte den rechtlichen Ton professionell und präzise."
         )
         
-        prompt = (
-            f"VORGABE / USER-KONTEXT:\n{user_kontext}\n\n"
-            f"SCHREIBEN-TYP:\n{schreiben_typ or 'Allgemein'}\n\n"
-            "Bitte generiere jetzt den Brieftext (nur Fließtext)."
-        )
+        prompt_parts = []
+        if empfaenger == 'mandant':
+             prompt_parts.append("EMPFEÄNGER-KONTEXT: Das Schreiben ist eine Sachstandsinformation an den Mandanten.")
+        else:
+             prompt_parts.append("EMPFEÄNGER-KONTEXT: Das Schreiben geht an die gegnerische Versicherung/Haftpflicht.")
+
+        if akte_context:
+            prompt_parts.append(f"AKTE-KONTEXT:\n{akte_context}")
+        if rag_context:
+            prompt_parts.append(f"MUSTER-VORLAGEN (zur Orientierung für Struktur/Formulierung):\n{rag_context}")
+        
+        prompt_parts.append(f"VORGABE / USER-KONTEXT:\n{user_kontext}")
+        if notizen:
+            prompt_parts.append(f"Besondere Hinweise des Sachbearbeiters:\n{notizen}")
+
+        prompt_parts.append(f"SCHREIBEN-TYP:\n{schreiben_typ or 'Allgemein'}")
+        prompt_parts.append("Bitte generiere jetzt den Brieftext (nur Fließtext).")
+
+        prompt = "\n\n".join(prompt_parts)
         
         import asyncio
+        full_prompt = f"{system_instruction}\n\n{prompt}"
         loop = asyncio.get_event_loop()
-        response_text = await loop.run_in_executor(
-            None, 
-            lambda: gemini.generate_content(prompt, system_instruction=system_instruction)
-        )
+        response_text = await loop.run_in_executor(None, gemini.generate, full_prompt)
         
         return {
             "brief_text": response_text.strip(),
             "schreiben_typ": schreiben_typ or "sonstig"
         }
+
+    async def _sync_frist_zu_calendar(self, akte_id: int, titel: str, datum: str, beschreibung: str = ""):
+        """N-G3 Tool Handler: Erstellt ein Google Calendar Event"""
+        from app.services.google_calendar_client import google_calendar_client
+        import datetime
+        
+        try:
+            parsed_date = datetime.date.fromisoformat(datum)
+        except ValueError:
+            return {"error": f"Ungültiges Datumsformat: {datum}. Erwartet: YYYY-MM-DD"}
+            
+        event_id = google_calendar_client.create_event(
+            titel=titel,
+            datum=parsed_date,
+            beschreibung=beschreibung,
+            akte_id=akte_id
+        )
+        
+        if event_id:
+            return {
+                "status": "success",
+                "event_id": event_id,
+                "datum": datum
+            }
+        else:
+            return {
+                "status": "mock",
+                "message": "Google Calendar nicht konfiguriert."
+            }
+
+    async def _sende_email_an_gegner(self, akte_id: int, betreff: str, text: str, dokument_id: int = None):
+        """GM-2 Tool Handler: Sendet eine E-Mail an den Gegner."""
+        from app.services.google_gmail_client import google_gmail_client
+        
+        # 1. Gegner E-Mail aus Akte laden (Wir nutzen den bestehenden /akte_by_id/ API-Pfad 
+        #    bzw. passen die Abfrage soweit nötig an. In Aufgabe wurde erwähnt:
+        #    'GET /api/ai/query/akte_by_id/?akte_id=...' -> wir nehmen _get)
+        try:
+            # Versuche Akte per ID zu laden. Wenn der Endpoint noch nicht existiert,
+            # fangen wir den Fehler ab und geben einen sauberen Hinweis.
+            try:
+                akte_data = await self._get("akte_by_id/", {"akte_id": akte_id})
+            except Exception as e:
+                logger.error(f"Konnte Akte {akte_id} nicht über akte_by_id/ laden: {e}")
+                return {"error": f"Informationen zur Akte {akte_id} konnten zur Zeit nicht geladen werden (Endpoint fehlt?)."}
+                
+            gegner_email = akte_data.get("gegner_email")
+            if not gegner_email:
+                # Falls keine Email da ist
+                return {"error": f"Keine E-Mail-Adresse für den Gegner von Akte {akte_id} hinterlegt."}
+                
+            erfolg = google_gmail_client.send_email(
+                an=gegner_email,
+                betreff=betreff,
+                text=text
+            )
+            
+            if erfolg:
+                return {
+                    "status": "success",
+                    "an": gegner_email,
+                    "betreff": betreff
+                }
+            elif not google_gmail_client.enabled:
+                return {
+                    "status": "mock",
+                    "message": "Gmail nicht konfiguriert — E-Mail nicht gesendet."
+                }
+            else:
+                 return {"error": "Senden der E-Mail fehlgeschlagen."}
+                 
+        except Exception as e:
+            logger.error(f"Fehler in _sende_email_an_gegner: {e}")
+            return {"error": str(e)}
 
     # -----------------------------------------------------------------------
     # Ergebnis-Formatierung → Frontend-Format
@@ -565,6 +763,58 @@ class QueryService:
                 "schreiben_typ": raw_data.get("schreiben_typ"),
                 "query_used": tool_name,
             }
+            
+        if tool_name == "sync_frist_zu_calendar":
+            if raw_data.get("status") == "success":
+                return {
+                    "status": "ok",
+                    "result_type": "calendar_event_erstellt",
+                    "data": {
+                        "event_id": raw_data.get("event_id"),
+                        "datum": raw_data.get("datum")
+                    },
+                    "query_used": tool_name,
+                }
+            elif raw_data.get("status") == "mock":
+                return {
+                    "status": "ok",
+                    "result_type": "info",
+                    "data": raw_data.get("message"),
+                    "query_used": tool_name,
+                }
+            else:
+                return {
+                    "status": "error",
+                    "result_type": "text",
+                    "data": raw_data.get("error", "Unbekannter Fehler bei Calendar-Sync"),
+                    "query_used": tool_name,
+                }
+                
+        if tool_name == "sende_email_an_gegner":
+            if raw_data.get("status") == "success":
+                return {
+                    "status": "ok",
+                    "result_type": "email_gesendet",
+                    "data": {
+                        "an": raw_data.get("an"),
+                        "betreff": raw_data.get("betreff")
+                    },
+                    "query_used": tool_name,
+                }
+            elif raw_data.get("status") == "mock":
+                return {
+                    "status": "ok",
+                    "result_type": "info",
+                    "data": raw_data.get("message"),
+                    "query_used": tool_name,
+                }
+            else:
+                 return {
+                    "status": "error",
+                    "result_type": "fehler",
+                    "data": raw_data.get("error", "Konnte E-Mail nicht senden."),
+                    "query_used": tool_name,
+                }
 
         if tool_name == "get_akte_by_aktenzeichen":
             akte = raw_data.get("akte")

@@ -14,12 +14,16 @@ class OrchestratorService:
         self.system_prompt = (
             "Du bist ein hochqualifizierter KI-Assistent für eine Anwaltskanzlei (Verkehrsrecht). "
             "Deine Aufgabe ist es, professionelle Erstanschreiben an gegnerische Versicherungen oder Schädiger zu entwerfen. "
-            "WICHTIGSTE REGEL: Generiere AUSSCHLIESSLICH den reinen Fließtext des Briefes. "
-            "Kein Briefkopf, keine Absender-/Empfängeradressen, kein Datum, kein Betreff und KEINE Grußformel am Ende. "
-            "Nutze zwingend den juristischen Tonfall und beachte folgende Vorgaben strikt:\n"
+            "WICHTIGE REGELN:\n"
+            "- Kein Briefkopf, keine Absender-/Empfängeradressen, kein Datum, kein Betreff, "
+            "KEINE Anrede, KEINE Grußformel — diese Teile werden vom System automatisch eingefügt.\n"
+            "- Schreibe NUR den reinen Fließtext des Briefes (ab dem ersten inhaltlichen Satz).\n"
+            "- Schreibe einen vollständigen, inhaltlich ausführlichen Brieftext.\n"
+            "- Nutze zwingend den juristischen Tonfall und beachte folgende Vorgaben strikt:\n"
             "1. Zitiere immer die relevanten Anspruchsgrundlagen, insbesondere §§ 7, 18 StVG sowie § 115 VVG (Direktanspruch gegen die Haftpflichtversicherung).\n"
             "2. Setze für Zahlungs- oder Antwortaufforderungen standardmäßig eine Frist von 14 Tagen ab Zugang des Schreibens, sofern in den Notizen nichts anderes angegeben ist.\n"
-            "3. Formuliere präzise Aufforderungen wie in den Beispielen, die dir als Kontext mitgegeben werden."
+            "3. Formuliere präzise Aufforderungen wie in den Beispielen, die dir als Kontext mitgegeben werden.\n"
+            "4. Erfasse ALLE relevanten Schadenspositionen aus den Falldaten und fordere sie konkret ein."
         )
 
     async def generate_draft(self, fall_daten: Dict[str, Any], notizen: str, rag_context: List[Dict[str, Any]]) -> str:
@@ -71,7 +75,7 @@ Gib NUR den Text des Anschreibens ohne Metakommentar zurück.
             }],
             "generationConfig": {
                 "temperature": 0.2, # Niedrige Temperatur für sichere juristische Texte
-                "maxOutputTokens": 2000
+                "maxOutputTokens": 4096
             }
         }
         

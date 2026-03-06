@@ -42,6 +42,7 @@ class Settings(BaseSettings):
         # Absoluter Pfad damit uvicorn die .env auch findet
         env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
         case_sensitive = False
+        extra = "ignore"
 
 
 # Global settings instance
