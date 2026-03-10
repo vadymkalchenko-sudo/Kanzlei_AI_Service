@@ -1,36 +1,200 @@
 import io
+import logging
+from email.parser import BytesParser
 from fastapi import UploadFile
 from pypdf import PdfReader
 from docx import Document
 
+logger = logging.getLogger(__name__)
+
+# Minimale Zeichenanzahl aus pypdf — darunter gilt das PDF als Scan → Vision Fallback
+_PDF_TEXT_MIN_CHARS = 150
+
+
 class FileExtractor:
-    """Extrahiert Text aus hochgeladenen Dokumenten (.pdf, .docx, .txt)"""
-    
+    """Extrahiert Text aus hochgeladenen Dokumenten (.pdf, .docx, .msg, .eml, .txt, .jpg/.jpeg/.png).
+
+    Strategie:
+    - Text-basierte Formate (msg, eml, docx, txt): direkte Extraktion
+    - PDF: erst pypdf, bei zu wenig Text (<150 Zeichen) Gemini Vision Fallback
+    - Bilder (jpg, jpeg, png): direkt Gemini Vision (gleicher Mechanismus wie Aktenanlage)
+    """
+
     @staticmethod
     async def extract_text(file: UploadFile) -> str:
         content = await file.read()
-        filename = file.filename.lower()
-        
-        if filename.endswith(".pdf"):
+        return FileExtractor.extract_text_from_bytes(content, file.filename)
+
+    @staticmethod
+    def extract_text_from_bytes(content: bytes, filename: str) -> str:
+        """Extrahiert Text aus Bytes — nutzbar ohne UploadFile (z.B. Batch-Indexierung)."""
+        filename_lower = filename.lower()
+
+        if filename_lower.endswith(".pdf"):
             return FileExtractor._extract_pdf(content)
-        elif filename.endswith(".docx"):
+        elif filename_lower.endswith(".docx"):
             return FileExtractor._extract_docx(content)
-        elif filename.endswith(".txt"):
+        elif filename_lower.endswith(".msg"):
+            return FileExtractor._extract_msg(content)
+        elif filename_lower.endswith(".eml"):
+            return FileExtractor._extract_eml(content)
+        elif filename_lower.endswith(".txt"):
             return content.decode("utf-8", errors="replace")
+        elif filename_lower.endswith(".jpg") or filename_lower.endswith(".jpeg"):
+            return FileExtractor._extract_via_gemini_vision(content, "image/jpeg")
+        elif filename_lower.endswith(".png"):
+            return FileExtractor._extract_via_gemini_vision(content, "image/png")
         else:
-            raise ValueError(f"Nicht unterstütztes Dateiformat: {filename}")
-            
+            logger.warning(f"Nicht unterstütztes Dateiformat für Text-Extraktion: {filename}")
+            return ""
+
     @staticmethod
     def _extract_pdf(content: bytes) -> str:
-        pdf_reader = PdfReader(io.BytesIO(content))
-        text = ""
-        for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-        return text.strip()
-        
+        """
+        Extrahiert Text aus PDFs — zweistufig:
+        1. pypdf (schnell, kostenlos) — für text-basierte PDFs
+        2. Gemini Vision Fallback — wenn pypdf zu wenig liefert (Scan-PDF erkannt)
+           Gemini liest dann die gesamte Seite inklusive eingebetteter Bilder,
+           Tabellen, Stempel und handschriftlicher Notizen.
+        """
+        try:
+            pdf_reader = PdfReader(io.BytesIO(content))
+            pages: list[str] = []
+            for page in pdf_reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    pages.append(page_text)
+            text = "\n".join(pages).strip()
+        except Exception as e:
+            logger.warning(f"pypdf Fehler: {e} — versuche Gemini Vision")
+            text = ""
+
+        if len(text) >= _PDF_TEXT_MIN_CHARS:
+            return text
+
+        # Scan-PDF oder bild-dominiertes Gutachten erkannt → Gemini Vision
+        logger.info(
+            f"PDF-Text zu kurz ({len(text)} Zeichen) — Scan/Bild-PDF erkannt, "
+            f"starte Gemini Vision (liest auch eingebettete Bilder und Tabellen)"
+        )
+        vision_text = FileExtractor._extract_via_gemini_vision(content, "application/pdf")
+        return vision_text if vision_text else text
+
     @staticmethod
     def _extract_docx(content: bytes) -> str:
         doc = Document(io.BytesIO(content))
-        return "\n".join([paragraph.text for paragraph in doc.paragraphs]).strip()
+        return "\n".join([p.text for p in doc.paragraphs if p.text.strip()]).strip()
+
+    @staticmethod
+    def _extract_msg(content: bytes) -> str:
+        """Extrahiert Text aus Outlook .msg Dateien (extract-msg Library).
+
+        extract_msg / olefile öffnet Sub-Objekte (Attachments, Properties) intern
+        erneut über den originalen File-Handle. BytesIO wird dabei nach dem ersten
+        read() als 'closed' betrachtet → I/O error.
+        Lösung: temporäre Datei auf Disk schreiben, damit olefile einen stabilen
+        Datei-Pfad hat.
+        """
+        import tempfile
+        import os
+        tmp_path: str | None = None
+        result: str = ""
+        try:
+            import extract_msg  # type: ignore[import-untyped]
+
+            # Temporäre .msg-Datei anlegen — olefile öffnet Sub-Objekte intern erneut
+            # über den originalen Handle. Mit BytesIO kommt es zu "I/O on closed file".
+            with tempfile.NamedTemporaryFile(suffix=".msg", delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+
+            msg = extract_msg.openMsg(tmp_path)
+            parts: list[str] = []
+            if msg.subject:
+                parts.append(f"Betreff: {msg.subject}")
+            if msg.sender:
+                parts.append(f"Von: {msg.sender}")
+            if msg.date:
+                parts.append(f"Datum: {msg.date}")
+            if msg.to:
+                parts.append(f"An: {msg.to}")
+            body: str = msg.body or ""
+            if body.strip():
+                parts.append(f"\n{body.strip()}")
+            msg.close()
+            result = "\n".join(parts).strip()
+        except Exception as e:
+            logger.error(f"Fehler beim Parsen der .msg Datei: {e}")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        return result
+
+    @staticmethod
+    def _extract_eml(content: bytes) -> str:
+        """Extrahiert Text aus .eml Dateien (Standard-Email-Format)."""
+        try:
+            msg = BytesParser().parsebytes(content)
+            parts: list[str] = []
+            if msg.get("Subject"):
+                parts.append(f"Betreff: {msg.get('Subject')}")
+            if msg.get("From"):
+                parts.append(f"Von: {msg.get('From')}")
+            if msg.get("Date"):
+                parts.append(f"Datum: {msg.get('Date')}")
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() == "text/plain":
+                        raw = part.get_payload(decode=True)
+                        if isinstance(raw, bytes):
+                            parts.append(f"\n{raw.decode('utf-8', errors='replace').strip()}")
+                        break
+            else:
+                raw = msg.get_payload(decode=True)
+                if isinstance(raw, bytes):
+                    parts.append(f"\n{raw.decode('utf-8', errors='replace').strip()}")
+            return "\n".join(parts).strip()
+        except Exception as e:
+            logger.error(f"Fehler beim Parsen der .eml Datei: {e}")
+            return ""
+
+    @staticmethod
+    def _extract_via_gemini_vision(content: bytes, mime_type: str) -> str:
+        """
+        Nutzt Gemini Vision um Text aus Bildern oder Scan-PDFs zu extrahieren.
+
+        Gleicher Mechanismus wie bei der Aktenanlage (ai_extractor.py):
+        Bytes + MIME-Type direkt an Gemini — keine zusätzlichen Libraries nötig.
+        Gemini versteht nativ: image/jpeg, image/png, application/pdf.
+
+        Besonders wertvoll für:
+        - Kfz-Gutachten (Schadensfotos mit Markierungen, Kostentabellen als Bild)
+        - Eingescannte Briefe und Behördenschreiben
+        - Fahrzeugscheine (Scan/Foto)
+        """
+        try:
+            import google.generativeai as genai
+            from app.config import settings
+
+            if not settings.gemini_api_key:
+                logger.warning("GEMINI_API_KEY nicht gesetzt — Vision-Extraktion übersprungen")
+                return ""
+
+            genai.configure(api_key=settings.gemini_api_key)
+            model = genai.GenerativeModel(settings.gemini_model)
+
+            response = model.generate_content([
+                "Extrahiere den vollständigen Text aus diesem Dokument. "
+                "Behalte alle Zahlen, Datumsangaben, Adressen, Namen, "
+                "Kennzeichen, Schadensbeträge und Tabelleninhalte vollständig. "
+                "Gib nur den extrahierten Text zurück, keine Erklärungen.",
+                {"mime_type": mime_type, "data": content},
+            ])
+
+            text = response.text.strip() if response.text else ""
+            logger.info(f"Gemini Vision: {len(text)} Zeichen extrahiert ({mime_type})")
+            return text
+
+        except Exception as e:
+            logger.error(f"Gemini Vision Fehler ({mime_type}): {e}")
+            return ""

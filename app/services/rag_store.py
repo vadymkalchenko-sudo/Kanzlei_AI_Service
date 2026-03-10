@@ -22,6 +22,7 @@ class RAGStore:
         self._client = None
         self._collection = None
         self._system_collection = None
+        self._akte_collection = None
         
         # Stelle sicher, dass das Verzeichnis existiert
         if not os.path.exists(self.persist_directory):
@@ -55,9 +56,225 @@ class RAGStore:
                 embedding_function=dummy_ef,
                 metadata={"description": "Dokumentation über das Kanzlei-Programm"}
             )
+
+            # Neue Collection: Volltexte aller Akte-Dokumente (RAG Vollanalyse)
+            self._akte_collection = self._client.get_or_create_collection(
+                name="akte_dokumente",
+                embedding_function=dummy_ef,
+                metadata={"description": "Hochgeladene Dokumente pro Akte (indexiert für RAG-Analyse)"}
+            )
+            logger.info("✓ ChromaDB Collection 'akte_dokumente' bereit")
         except Exception as e:
             logger.error(f"✗ Fehler bei ChromaDB Initialisierung: {e}")
             self._client = None
+
+    @staticmethod
+    def _chunk_text_with_overlap(text: str, chunk_size_words: int = 400, overlap_words: int = 50) -> List[str]:
+        """
+        Teilt Text in Wort-basierte Chunks mit Overlap.
+
+        Args:
+            text: Eingabetext
+            chunk_size_words: Zielgröße in Wörtern (~400 Wörter ≈ ~400 Tokens)
+            overlap_words: Anzahl Wörter Überlappung zwischen Chunks
+
+        Returns:
+            Liste von Text-Chunks
+        """
+        if not text or not text.strip():
+            return []
+
+        words = text.split()
+        if len(words) <= chunk_size_words:
+            return [text.strip()]
+
+        chunks: List[str] = []
+        start = 0
+        step = chunk_size_words - overlap_words  # Schrittweite mit Overlap
+
+        while start < len(words):
+            end = min(start + chunk_size_words, len(words))
+            chunk = " ".join(words[start:end])
+            if chunk.strip():
+                chunks.append(chunk.strip())
+            if end >= len(words):
+                break
+            start += step
+
+        return chunks
+
+    async def index_dokument(
+        self,
+        akte_id: int,
+        dokument_id: int,
+        titel: str,
+        kategorie: str,
+        text: str,
+    ) -> int:
+        """
+        Indexiert ein Dokument in der 'akte_dokumente' Collection.
+
+        Bestehende Chunks für diese dokument_id werden zuerst gelöscht
+        (Re-Indexierung bei erneutem Upload). Dann wird der Text in
+        ~400-Wort-Chunks mit 50-Wort-Overlap zerlegt und gespeichert.
+
+        Args:
+            akte_id: ID der zugehörigen Akte
+            dokument_id: ID des Dokuments in Django
+            titel: Dokumenttitel
+            kategorie: Kategorie (z.B. "Gutachten", "Email")
+            text: Extrahierter Volltext des Dokuments
+
+        Returns:
+            Anzahl der gespeicherten Chunks (0 bei Fehler oder leerem Text)
+        """
+        if not self._akte_collection:
+            logger.error("RAG Store: 'akte_dokumente' Collection nicht initialisiert!")
+            return 0
+
+        if not text or not text.strip():
+            logger.warning(f"index_dokument: Kein Text für Dokument {dokument_id} — übersprungen.")
+            return 0
+
+        doc_id_str = str(dokument_id)
+
+        # 1. Alte Chunks für dieses Dokument löschen (Re-Indexierung)
+        try:
+            self._akte_collection.delete(where={"dokument_id": doc_id_str})
+            logger.debug(f"index_dokument: Alte Chunks für Dokument {dokument_id} gelöscht.")
+        except Exception as e:
+            # Kann passieren wenn keine Chunks existieren — kein fataler Fehler
+            logger.debug(f"index_dokument: Keine bestehenden Chunks zum Löschen für {dokument_id}: {e}")
+
+        # 2. Text in Chunks aufteilen (~400 Wörter, 50 Wörter Overlap)
+        chunks = self._chunk_text_with_overlap(text.strip())
+        if not chunks:
+            logger.warning(f"index_dokument: Chunking ergab leeres Ergebnis für Dokument {dokument_id}.")
+            return 0
+
+        # 3. IDs und Metadaten vorbereiten
+        ids = [f"akte_{akte_id}_dok_{dokument_id}_chunk_{i}" for i in range(len(chunks))]
+        metadatas = [
+            {
+                "akte_id": str(akte_id),
+                "dokument_id": doc_id_str,
+                "titel": titel or "",
+                "kategorie": kategorie or "",
+            }
+            for _ in chunks
+        ]
+
+        # 4. Embeddings via Vertex/Gemini API holen und speichern
+        try:
+            embeddings = await self._get_vertex_embeddings(chunks)
+
+            if embeddings:
+                self._akte_collection.upsert(
+                    documents=chunks,
+                    embeddings=embeddings,
+                    metadatas=metadatas,
+                    ids=ids,
+                )
+            else:
+                # Fallback: ChromaDB Default Embeddings (Development ohne API-Key)
+                self._akte_collection.upsert(
+                    documents=chunks,
+                    metadatas=metadatas,
+                    ids=ids,
+                )
+
+            logger.info(
+                f"✓ Dokument {dokument_id} (Akte {akte_id}) indexiert: "
+                f"{len(chunks)} Chunks in 'akte_dokumente'"
+            )
+            return len(chunks)
+
+        except Exception as e:
+            logger.error(f"✗ Fehler beim Indexieren von Dokument {dokument_id}: {e}")
+            return 0
+
+    async def search_akte_dokumente(
+        self,
+        query_text: str,
+        akte_id: int,
+        n_results: int = 8,
+    ) -> List[Dict]:
+        """
+        Sucht in der 'akte_dokumente' Collection — gefiltert nach akte_id.
+
+        Args:
+            query_text: Suchtext (z.B. Schadenshergang)
+            akte_id: Nur Chunks dieser Akte zurückgeben
+            n_results: Max. Anzahl Treffer
+
+        Returns:
+            Liste von {text, metadata, distance} Dictionaries
+        """
+        if not self._akte_collection:
+            logger.error("RAG Store: 'akte_dokumente' Collection nicht initialisiert!")
+            return []
+
+        filter_dict = {"akte_id": str(akte_id)}
+
+        try:
+            embeddings = await self._get_vertex_embeddings([query_text])
+
+            if embeddings:
+                results = self._akte_collection.query(
+                    query_embeddings=embeddings,
+                    n_results=n_results,
+                    where=filter_dict,
+                )
+            else:
+                results = self._akte_collection.query(
+                    query_texts=[query_text],
+                    n_results=n_results,
+                    where=filter_dict,
+                )
+
+            matches: List[Dict] = []
+            if results and results["documents"] and len(results["documents"]) > 0:
+                docs = results["documents"][0]
+                metas = results["metadatas"][0] if results["metadatas"] else [{}] * len(docs)
+                dists = results["distances"][0] if "distances" in results and results["distances"] else [0] * len(docs)
+                for doc, meta, dist in zip(docs, metas, dists):
+                    matches.append({"text": doc, "metadata": meta, "distance": dist})
+
+            return matches
+
+        except Exception as e:
+            logger.error(f"✗ Fehler bei der akte_dokumente Suche (akte_id={akte_id}): {e}")
+            return []
+
+    def get_indexed_dokument_ids(self, akte_id: int | None = None) -> list[int]:
+        """
+        Gibt alle dokument_ids zurück, die bereits in 'akte_dokumente' indexiert sind.
+
+        Args:
+            akte_id: Nur IDs dieser Akte zurückgeben (None = alle Akten)
+
+        Returns:
+            Liste eindeutiger Dokument-IDs als Integer
+        """
+        if not self._akte_collection:
+            return []
+        try:
+            kwargs: dict = {"include": ["metadatas"]}
+            if akte_id is not None:
+                kwargs["where"] = {"akte_id": str(akte_id)}
+            results = self._akte_collection.get(**kwargs)
+            ids: set[int] = set()
+            metadatas_raw = results.get("metadatas") if results else None
+            for meta in (metadatas_raw or []):
+                if meta and meta.get("dokument_id"):
+                    try:
+                        ids.add(int(meta["dokument_id"]))
+                    except (ValueError, TypeError):
+                        pass
+            return list(ids)
+        except Exception as e:
+            logger.error(f"get_indexed_dokument_ids Fehler: {e}")
+            return []
 
     async def add_documents(self, documents: List[str], metadatas: List[Dict[str, Any]], ids: List[str], collection_name: str = "kanzlei_wissen"):
         """

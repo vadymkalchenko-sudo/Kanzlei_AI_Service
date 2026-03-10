@@ -12,6 +12,7 @@ import asyncio
 from app.config import settings
 from app.services.email_processor import email_processor
 from app.services.ai_extractor import ai_extractor
+from app.services.ai_file_extractor import FileExtractor
 from app.services.django_client import django_client
 from app.services.query_service import query_service
 from app.job_tracker import job_tracker
@@ -186,6 +187,111 @@ class RagIngestRequest(BaseModel):
     text: str
     metadata: dict  # z.B. {"fall_typ": "Auffahrunfall", "akte": "Muster-123"}
     chunk_size: int = 500  # Zeichen pro Chunk für granularere Bausteine
+
+
+class IndexDokumentRequest(BaseModel):
+    """Request-Modell für POST /api/rag/index_dokument/ (A3)"""
+    akte_id: int
+    dokument_id: int
+    titel: str
+    kategorie: str = ""
+    text: str
+
+
+@app.post("/api/rag/index_dokument/", dependencies=[Depends(verify_hmac)])
+async def rag_index_dokument(request: IndexDokumentRequest):
+    """
+    A3: Indexiert ein Akte-Dokument in der ChromaDB Collection 'akte_dokumente'.
+
+    Wird vom Django-Backend nach jedem Dokument-Upload als BackgroundTask aufgerufen.
+    Extrahierter Text wird in ~400-Wort-Chunks mit 50-Wort-Overlap gespeichert.
+    Bestehende Chunks für diese dokument_id werden zuvor gelöscht (Re-Indexierung).
+
+    Request Body:
+        { "akte_id": 42, "dokument_id": 123, "titel": "Gutachten", "kategorie": "Gutachten", "text": "..." }
+
+    Response:
+        { "status": "indexed", "chunks": 5, "dokument_id": 123 }
+    """
+    try:
+        from app.services.rag_store import rag_store
+
+        if not request.text or not request.text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Kein Text zum Indexieren übergeben."
+            )
+
+        chunk_count = await rag_store.index_dokument(
+            akte_id=request.akte_id,
+            dokument_id=request.dokument_id,
+            titel=request.titel,
+            kategorie=request.kategorie,
+            text=request.text,
+        )
+
+        logger.info(
+            f"RAG index_dokument: Dokument {request.dokument_id} "
+            f"(Akte {request.akte_id}) → {chunk_count} Chunks"
+        )
+
+        return {
+            "status": "indexed",
+            "chunks": chunk_count,
+            "dokument_id": request.dokument_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Fehler bei /api/rag/index_dokument/: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Indexierung fehlgeschlagen: {str(e)}"
+        )
+
+
+@app.post("/api/rag/index_file/", dependencies=[Depends(verify_hmac)])
+async def rag_index_file(
+    file: UploadFile = File(...),
+    akte_id: int = Form(...),
+    dokument_id: int = Form(...),
+    titel: str = Form(""),
+    kategorie: str = Form(""),
+):
+    """
+    A3b: Indexiert eine Datei direkt (ohne vorherige Textextraktion durch Django).
+    Django sendet die rohe Datei — Textextraktion passiert hier im AI-Service.
+    Unterstützt: .pdf, .docx, .msg, .eml, .txt, .jpg/.jpeg
+
+    Scan-PDFs und Bilder ohne extrahierbaren Text werden übersprungen (chunks=0).
+    """
+    try:
+        from app.services.rag_store import rag_store
+
+        content = await file.read()
+        filename = file.filename or ""
+        text = FileExtractor.extract_text_from_bytes(content, filename)
+
+        if not text or not text.strip():
+            logger.info(f"index_file: Kein Text extrahierbar für {filename} (Scan/Bild?) — übersprungen.")
+            return {"status": "skipped", "chunks": 0, "dokument_id": dokument_id, "reason": "no_text"}
+
+        chunk_count = await rag_store.index_dokument(
+            akte_id=akte_id,
+            dokument_id=dokument_id,
+            titel=titel,
+            kategorie=kategorie,
+            text=text,
+        )
+
+        logger.info(f"index_file: {filename} → {chunk_count} Chunks (Akte {akte_id})")
+        return {"status": "indexed", "chunks": chunk_count, "dokument_id": dokument_id}
+
+    except Exception as e:
+        logger.error(f"Fehler bei /api/rag/index_file/: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Indexierung fehlgeschlagen: {str(e)}")
+
 
 def _chunk_text(raw_text: str, chunk_size: int = 500) -> list[str]:
     """Zerteilt Text in Chunks (Bausteine)"""
@@ -387,6 +493,94 @@ async def generiere_schreiben(request: SchreibenRequest):
         )
 
 
+class AnalyseRequest(BaseModel):
+    """Request-Modell für POST /api/analyse/"""
+    text: str
+    akte_id: int | None = None
+
+
+@app.post("/api/analyse/", dependencies=[Depends(verify_hmac)])
+async def analyse_text(request: AnalyseRequest):
+    """
+    Juristische Akten-Analyse mit RAG-Kontext.
+
+    Falls akte_id übergeben wird:
+    1. ChromaDB akte_dokumente wird nach relevantem Dokumenten-Inhalt durchsucht
+    2. Die Treffer werden als Kontext in den Prompt eingebettet
+    3. Gemini analysiert mit echtem Dokumenteninhalt statt nur Metadaten
+    """
+    gemini = get_gemini_client()
+    if not gemini:
+        raise HTTPException(status_code=503, detail="Gemini API ist nicht konfiguriert.")
+
+    # ── RAG: Dokumente der Akte aus ChromaDB holen ─────────────────────────────
+    rag_kontext = ""
+    if request.akte_id:
+        try:
+            from app.services.rag_store import rag_store
+            # Semantische Suche: Schadenshergang und Regulierung als Query
+            rag_results = await rag_store.search_akte_dokumente(
+                query_text=request.text[:500],  # Erste 500 Zeichen als Suchanfrage
+                akte_id=request.akte_id,
+                n_results=8,
+            )
+            if rag_results:
+                rag_kontext = "\n\n=== DOKUMENTEN-INHALT (aus RAG-Index) ===\n"
+                rag_kontext += "Die folgenden Auszüge stammen aus den tatsächlichen Dokumenten dieser Akte:\n\n"
+                for i, chunk in enumerate(rag_results, 1):
+                    titel = chunk.get("titel", "Unbekannt")
+                    kategorie = chunk.get("kategorie", "")
+                    text = chunk.get("text", "")
+                    rag_kontext += f"[Dok {i}: {titel}"
+                    if kategorie:
+                        rag_kontext += f" ({kategorie})"
+                    rag_kontext += f"]\n{text}\n\n"
+                logger.info(
+                    f"RAG: {len(rag_results)} Chunks für Akte {request.akte_id} geladen"
+                )
+            else:
+                logger.info(
+                    f"RAG: Keine Chunks für Akte {request.akte_id} gefunden "
+                    f"(noch nicht indexiert?)"
+                )
+        except Exception as rag_err:
+            logger.warning(f"RAG-Abfrage fehlgeschlagen (Analyse läuft ohne): {rag_err}")
+
+    # ── Prompt zusammenbauen ───────────────────────────────────────────────────
+    full_prompt = (
+        "Du bist ein juristischer Assistent der Kanzlei AWR24 (Verkehrsrecht / Unfallschadensregulierung). "
+        "Erstelle eine fundierte, strukturierte Analyse mit konkreten Handlungsempfehlungen.\n\n"
+        + request.text
+        + rag_kontext
+    )
+
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        response_text = await loop.run_in_executor(
+            None,
+            lambda: gemini.generate(full_prompt)
+        )
+        return {"analyse": response_text.strip()}
+
+    except Exception as e:
+        err_str = str(e).lower()
+        if "quota" in err_str or "429" in err_str or "resource_exhausted" in err_str:
+            logger.warning(f"Gemini Quota erschöpft bei /api/analyse/: {e}")
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Gemini API Kontingent erschöpft. "
+                    "Bitte warte einige Minuten und versuche die Analyse erneut."
+                ),
+            )
+        logger.error(f"Fehler bei /api/analyse/: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fehler bei der Analyse: {str(e)}"
+        )
+
+
 class DocsCreateRequest(BaseModel):
     """Request-Modell für POST /api/docs/create/"""
     titel: str
@@ -498,6 +692,25 @@ async def rag_generate_draft(request: RagDraftRequest):
             status_code=500,
             detail=f"Fehler bei der Briefgenerierung: {str(e)}"
         )
+
+
+@app.get("/api/rag/indexed_ids/", dependencies=[Depends(verify_hmac)])
+async def rag_get_indexed_ids(akte_id: int | None = None):
+    """
+    Gibt alle Dokument-IDs zurück, die bereits in der 'akte_dokumente' Collection indexiert sind.
+    Wird vom Django Management-Command --nur-fehlende genutzt, um bereits vorhandene Dokumente
+    beim Batch-Indexieren zu überspringen.
+
+    Query-Parameter:
+        akte_id (optional): Nur IDs dieser Akte zurückgeben. Ohne Parameter: alle Akten.
+    """
+    try:
+        from app.services.rag_store import rag_store
+        ids = rag_store.get_indexed_dokument_ids(akte_id)
+        return {"akte_id": akte_id, "indexed_ids": ids, "count": len(ids)}
+    except Exception as e:
+        logger.error(f"Fehler bei /api/rag/indexed_ids/: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/rag/stats", dependencies=[Depends(verify_hmac)])
