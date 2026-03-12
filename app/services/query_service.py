@@ -1027,6 +1027,24 @@ WICHTIGE REGELN:
   2. Falls KEINE RVG-Positionen vorhanden: Nutze das Tool `berechne_rvg` um sie zu berechnen.
   3. Danach erstelle den Brief mit `erstelle_brief` und erwähne die berechneten Gebühren.
 - Die RVG-Gebühren werden AUTOMATISCH aus dem Gegenstandswert der Akte berechnet — du brauchst den User NICHT danach zu fragen.
+
+ZAHLUNGSPOSITIONS-KATEGORIEN (typische KFZ-Schadenpositionen):
+- Gutachten: Schadensgutachten, Wertgutachten
+- SV-Kosten: Sachverständigengebühren, Nebenkosten SV
+- Reparatur: Reparaturkosten Fahrzeug, Karosserie, Lackierung
+- Wertminderung: Merkantile Wertminderung
+- Nutzungsausfall: Nutzungsausfall Fahrzeug (Tage × Tagessatz)
+- Mietwagen: Mietwagenkosten, Ersatzfahrzeug
+- Schmerzensgeld: Schmerzensgeld, Verdienstausfall
+- Anwaltsgebühren: RVG-Gebühren (Geschäftsgebühr, Auslagenpauschale, USt.)
+- Sonstiges: Abschleppkosten, Unkostenpauschale, sonstige Positionen
+
+VOLLSTÄNDIGKEITSPRÜFUNG FINANZEN:
+Wenn der User fragt ob alle Rechnungen/Belege aus den Dokumenten auch im Finanz-Tab erfasst sind:
+1. Schaue in FINANZDATEN oben welche Positionen bereits vorhanden sind.
+2. Erkläre dem User welche Kategorien typischerweise zu erwarten wären (Gutachten, SV-Kosten, etc.).
+3. Weise auf fehlende Kategorien hin, die laut Akten-Kontext erwartet werden könnten.
+4. Du hast KEINEN direkten Zugriff auf Dokument-Inhalte — weise den User darauf hin, selbst zu prüfen ob alle Belege erfasst sind.
 """
 
         import google.ai.generativelanguage as gl
