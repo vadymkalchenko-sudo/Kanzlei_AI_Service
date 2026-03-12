@@ -51,11 +51,16 @@ class ExtractedAccident(BaseModel):
     kennzeichen_mandant: Optional[str] = None
     weitere_kennzeichen: list[str] = [] # Für Anhänger oder Zweitwagen
 
+class ExtractedFinanzdaten(BaseModel):
+    gutachten_netto: Optional[float] = None  # Nettokosten Schadensgutachten
+    sv_gebuehren: Optional[float] = None     # Sachverständigengebühren gesamt
+
 class CaseData(BaseModel):
     mandant: ExtractedPerson = ExtractedPerson()
     gegner_versicherung: ExtractedInsurance = ExtractedInsurance()
     unfall: ExtractedAccident = ExtractedAccident()
     fahrzeug: ExtractedVehicle = ExtractedVehicle() # NEU: Fahrzeugdaten
+    finanzdaten: Optional[ExtractedFinanzdaten] = None  # Beträge aus Rechnungen/Gutachten
     betreff: str = ""
     zusammenfassung: Optional[str] = ""
     # handlungsbedarf removed
@@ -200,14 +205,19 @@ class AIExtractor:
                     "kw": "110 (nur Zahl)",
                     "ez": "YYYY-MM-DD"
                 }},
+                "finanzdaten": {{
+                    "gutachten_netto": 1234.56,
+                    "sv_gebuehren": 345.00
+                }},
                 "betreff": "Betreff",
                 "zusammenfassung": "Zusammenfassung"
             }}
-            
+
             REGELN:
             - Wenn Daten fehlen, lass das Feld leer (""). Sende KEINE null-Werte für Textfelder!
             - ERFINDE NICHTS (Keine "Unbekannt" Platzhalter)!
             - Trenne Straße und Hausnummer IMMER in separate Felder!
+            - finanzdaten: Suche nach Rechnungsbeträgen/Gutachten-Kosten. Setze null wenn nicht vorhanden, keine Schätzungen!
             """
 
             # Prepare multimodal content parts

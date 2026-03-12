@@ -112,10 +112,15 @@ Extrahiere ALLE Daten die du findest als JSON:
   }},
   "versicherungen": [
     {{"name": "Versicherungsname", "schadennummer": "12345", "adresse": "Adresse"}}
-  ]
+  ],
+  "finanzdaten": {{
+    "gutachten_netto": 1234.56,
+    "sv_gebuehren": 345.00
+  }}
 }}
 
 Wenn Informationen nicht vorhanden sind, setze den Wert auf null.
+finanzdaten: Suche nach Rechnungsbeträgen für Gutachten und Sachverständigengebühren. Nur echte Werte aus dem Dokument — keine Schätzungen!
 Antworte NUR mit validem JSON, ohne Markdown, ohne Erklärungen.
 """
         
@@ -181,6 +186,10 @@ DJANGO-SCHEMA:
     "typ": "Marke Modell",
     "kw": "110",
     "ez": "YYYY-MM-DD"
+  }},
+  "finanzdaten": {{
+    "gutachten_netto": null,
+    "sv_gebuehren": null
   }},
   "betreff": "",
   "zusammenfassung": "",

@@ -1015,6 +1015,33 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         akte_id = akte_resp['akte_id']
         aktenzeichen = akte_resp.get('aktenzeichen')
         logger.info(f"Job {job_id}: Created Akte {akte_id} ({aktenzeichen})")
+
+        # Auto-Fill Zahlungspositionen aus KI-extrahierten Finanzdaten
+        if case_data.finanzdaten:
+            fd = case_data.finanzdaten
+            positionen = []
+            if fd.gutachten_netto is not None:
+                positionen.append({
+                    "beschreibung": "Schadensgutachten (netto)",
+                    "soll_betrag": fd.gutachten_netto,
+                    "category": "Gutachten"
+                })
+            if fd.sv_gebuehren is not None:
+                positionen.append({
+                    "beschreibung": "Sachverständigengebühren",
+                    "soll_betrag": fd.sv_gebuehren,
+                    "category": "SV-Kosten"
+                })
+            if positionen:
+                try:
+                    await django_client._post_request(
+                        "actions/erstelle_zahlungspositionen/",
+                        {"akte_id": akte_id, "positionen": positionen}
+                    )
+                    logger.info(f"Job {job_id}: Auto-created {len(positionen)} Zahlungsposition(en)")
+                except Exception as e:
+                    logger.warning(f"Job {job_id}: Zahlungspositionen Auto-Fill fehlgeschlagen: {e}")
+
         job_tracker.update_step(job_id, 'akte_creation', 'completed', 'Akte erstellt')
         job_tracker.update_step(job_id, 'document_upload', 'processing', 'Dokumente werden hochgeladen...')
 

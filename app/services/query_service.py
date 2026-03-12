@@ -935,29 +935,18 @@ class QueryService:
                 return resp.json()
 
             elif tool_name == "erstelle_brief":
-                # Brief-Generierung über bestehenden orchestrator-Endpoint
+                # Brief speichern — Gemini hat den Text bereits im Tool-Call generiert
                 resp = await client.post(
-                    f"{self.django_base}/api/orchestrator/draft/",
+                    f"{self.django_base}/api/ai/actions/erstelle_brief/",
                     json={
                         "akte_id": args["akte_id"],
-                        "empfaenger": args["empfaenger"],
-                        "notizen": args.get("hinweise", ""),
-                    },
-                    headers=headers
-                )
-                draft_data = resp.json()
-                # Brief speichern
-                save_resp = await client.post(
-                    f"{self.django_base}/api/orchestrator/draft/save/",
-                    json={
-                        "akte_id": args["akte_id"],
-                        "draft_text": draft_data.get("draft_text", ""),
+                        "brief_text": args.get("brief_text", ""),
                         "betreff": args.get("betreff", ""),
-                        "empfaenger": args["empfaenger"],
+                        "empfaenger": args.get("empfaenger", "versicherung"),
                     },
                     headers=headers
                 )
-                return save_resp.json()
+                return resp.json()
 
         return {"error": f"Unbekanntes Tool: {tool_name}"}
 
@@ -1096,16 +1085,16 @@ WICHTIGE REGELN:
                     },
                     {
                         "name": "erstelle_brief",
-                        "description": "Einen Brief für die Akte erstellen und speichern",
+                        "description": "Einen professionellen Brief für die Akte erstellen und als Dokument speichern. Du schreibst den vollständigen Brieftext selbst (nur Fließtext, kein Briefkopf, keine Anrede, kein 'Mit freundlichen Grüßen'). Briefkopf, Datum, Anrede und Signatur werden automatisch ergänzt.",
                         "parameters": {
                             "type": gl.Type.OBJECT,
                             "properties": {
                                 "akte_id": {"type": gl.Type.INTEGER},
                                 "empfaenger": {"type": gl.Type.STRING, "enum": ["versicherung", "mandant"]},
-                                "betreff": {"type": gl.Type.STRING},
-                                "hinweise": {"type": gl.Type.STRING, "description": "Inhaltliche Hinweise für den Brief"}
+                                "betreff": {"type": gl.Type.STRING, "description": "Betreffzeile des Briefes"},
+                                "brief_text": {"type": gl.Type.STRING, "description": "Der vollständige Brieftext (nur Fließtext, kein Briefkopf, keine Signatur)"}
                             },
-                            "required": ["akte_id", "empfaenger", "betreff"]
+                            "required": ["akte_id", "empfaenger", "betreff", "brief_text"]
                         }
                     }
                 ]
@@ -1152,12 +1141,16 @@ WICHTIGE REGELN:
             tool_result = await self._execute_chat_tool(fc.name, fc_args_dict)
             actions_taken.append({"tool": fc.name, "result": tool_result})
 
-            # Tool-Ergebnis zurück an Gemini
+            # Tool-Ergebnis zurück an Gemini (glm.Part erforderlich, Raw-Dict wird nicht akzeptiert)
+            import google.ai.generativelanguage as gl
             contents.append(response.candidates[0].content)
-            contents.append({
-                "role": "user",
-                "parts": [{"function_response": {"name": fc.name, "response": tool_result}}]
-            })
+            contents.append(gl.Content(
+                role="user",
+                parts=[gl.Part(function_response=gl.FunctionResponse(
+                    name=fc.name,
+                    response={"result": tool_result}
+                ))]
+            ))
             try:
                 response = await chat_model.generate_content_async(contents)
             except Exception as e:
