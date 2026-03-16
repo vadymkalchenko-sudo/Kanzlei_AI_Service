@@ -1018,15 +1018,22 @@ WICHTIGE REGELN:
 - Die AKTE-ID für alle Tool-Aufrufe ist: {akte_id} — verwende sie DIREKT, frage den User NIEMALS danach.
 - Du hast ALLE Finanzdaten und Aufgaben oben vollständig — nutze sie direkt aus dem Kontext.
 - Frage NIEMALS nach Daten, die bereits im obigen Kontext stehen.
-- Bevor du eine Aktion ausführst (Aufgabe erstellen, Status ändern, Brief erstellen),
-  kündige sie im Chat an und warte auf Bestätigung ("Ja", "Ok", "Mach das" etc.).
-- Führe Aktionen NUR aus wenn der User explizit zustimmt.
 - Antworte immer auf Deutsch, präzise und kanzlei-professionell.
+
+BRIEFE (WICHTIG):
+- Wenn der User einen Brief anfordert (Erstanschreiben, Sachstandsinfo, Widerspruch etc.),
+  rufe SOFORT das Tool `erstelle_brief` auf — OHNE vorher zu fragen oder eine Vorschau zu zeigen.
+- Schreibe den vollständigen Brieftext direkt als `brief_text` Parameter im Tool-Aufruf.
+  Nur Fließtext: kein Briefkopf, kein Datum, keine Anrede, kein "Mit freundlichen Grüßen".
+- Nach dem Speichern zeige dem User eine kurze Zusammenfassung was geschrieben wurde.
 - Wenn der User einen Brief mit RVG-Gebühren anfordert:
   1. Prüfe ob die FINANZDATEN oben bereits RVG-Positionen enthalten.
-  2. Falls KEINE RVG-Positionen vorhanden: Nutze das Tool `berechne_rvg` um sie zu berechnen.
-  3. Danach erstelle den Brief mit `erstelle_brief` und erwähne die berechneten Gebühren.
-- Die RVG-Gebühren werden AUTOMATISCH aus dem Gegenstandswert der Akte berechnet — du brauchst den User NICHT danach zu fragen.
+  2. Falls KEINE RVG-Positionen vorhanden: Nutze zuerst `berechne_rvg`.
+  3. Dann sofort `erstelle_brief` aufrufen und die Gebühren im Text erwähnen.
+- Die RVG-Gebühren werden AUTOMATISCH aus dem Gegenstandswert der Akte berechnet — frage NICHT danach.
+
+ANDERE AKTIONEN (Aufgabe erstellen, Status ändern):
+- Kündige diese im Chat an und warte auf Bestätigung ("Ja", "Ok", "Mach das" etc.).
 """
 
         import google.ai.generativelanguage as gl
@@ -1090,9 +1097,9 @@ WICHTIGE REGELN:
                             "type": gl.Type.OBJECT,
                             "properties": {
                                 "akte_id": {"type": gl.Type.INTEGER},
-                                "empfaenger": {"type": gl.Type.STRING, "enum": ["versicherung", "mandant"]},
-                                "betreff": {"type": gl.Type.STRING, "description": "Betreffzeile des Briefes"},
-                                "brief_text": {"type": gl.Type.STRING, "description": "Der vollständige Brieftext (nur Fließtext, kein Briefkopf, keine Signatur)"}
+                                "empfaenger": {"type": gl.Type.STRING, "enum": ["versicherung", "mandant"], "description": "'versicherung' = an Gegner/Versicherung adressiert; 'mandant' = an Mandant adressiert"},
+                                "betreff": {"type": gl.Type.STRING, "description": "Betreffzeile des Briefes (z.B. 'Schadensregulierung – Ihr Zeichen: ...')"},
+                                "brief_text": {"type": gl.Type.STRING, "description": "Nur der Fließtext des Briefinhalts. KEIN Briefkopf, KEIN Datum, KEINE Anrede ('Sehr geehrte...'), KEIN Schluss ('Mit freundlichen Grüßen'). Diese Teile werden automatisch aus der Vorlage ergänzt."}
                             },
                             "required": ["akte_id", "empfaenger", "betreff", "brief_text"]
                         }
