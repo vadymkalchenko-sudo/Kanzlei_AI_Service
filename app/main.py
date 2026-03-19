@@ -1116,14 +1116,17 @@ async def create_akte_from_email(
         "job_id": job_id,
         "message": "E-Mail wird verarbeitet. Akte wird im Hintergrund erstellt."
     }
+
+
+@app.get("/api/akte/job_status/{job_id}", dependencies=[Depends(verify_hmac)])
+async def get_job_status(job_id: str):
     """
-    Gibt den Status eines Jobs zurück
+    Gibt den aktuellen Status eines Akte-Erstellungs-Jobs zurück.
+    Felder: status (processing|completed|failed), current_step, steps, akte_id, aktenzeichen, error
     """
     job = job_tracker.get_job(job_id)
-    
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    
     return job
 
 
