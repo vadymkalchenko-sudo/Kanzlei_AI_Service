@@ -51,6 +51,7 @@ class ExtractedAccident(BaseModel):
     kennzeichen_gegner: Optional[str] = None
     kennzeichen_mandant: Optional[str] = None
     weitere_kennzeichen: list[str] = [] # Für Anhänger oder Zweitwagen
+    schadenshergang: Optional[str] = None  # Unfallhergang-Text aus WhatsApp/Gutachten
 
 class ExtractedFinanzdaten(BaseModel):
     gutachten_netto: Optional[float] = None  # Nettokosten Schadensgutachten
@@ -222,7 +223,8 @@ class AIExtractor:
                     "datum": "YYYY-MM-DD", "ort": "Ort",
                     "kennzeichen_gegner": "XX-XX-1234", 
                     "kennzeichen_mandant": "XX-YY-5678",
-                    "weitere_kennzeichen": []
+                    "weitere_kennzeichen": [],
+                    "schadenshergang": "Vollständiger Unfallhergang-Text aus WhatsApp oder SV-Gutachten"
                 }},
                 "fahrzeug": {{
                     "typ": "Marke Modell (z.B. VW Touran, aus Feld D.3)",

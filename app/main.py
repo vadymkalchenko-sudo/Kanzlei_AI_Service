@@ -897,6 +897,17 @@ def _classify_attachment(filename: str) -> tuple[str | None, bool]:
     return None, False
 
 
+def _iso_to_de_datum(iso_datum: str) -> str:
+    """Konvertiert ISO-Datum YYYY-MM-DD → DD.MM.YYYY für Frontend-Textfeld."""
+    if not iso_datum:
+        return ""
+    try:
+        from datetime import datetime
+        return datetime.strptime(iso_datum, "%Y-%m-%d").strftime("%d.%m.%Y")
+    except ValueError:
+        return iso_datum
+
+
 async def process_email_background_task(
     job_id: str,
     email_content_bytes: bytes,
@@ -1041,9 +1052,11 @@ async def process_email_background_task(
             },
             "fragebogen_data": {
                 # Mapping auf flache Frontend-Struktur (FragebogenData interface)
-                "datum_zeit": case_data.unfall.datum,
+                # Datum: ISO YYYY-MM-DD → DD.MM.YYYY (Frontend erwartet Textformat)
+                "datum_zeit": _iso_to_de_datum(case_data.unfall.datum),
                 "unfallort": case_data.unfall.ort,
                 "kfz_kennzeichen": case_data.unfall.kennzeichen_mandant,
+                "schadenshergang": case_data.unfall.schadenshergang or "",
                 
                 "vers_gegner": case_data.gegner_versicherung.name,
                 "gegner_kfz": case_data.unfall.kennzeichen_gegner,
