@@ -1192,7 +1192,7 @@ ANDERE AKTIONEN (Aufgabe erstellen, Status ändern):
         config = genai_types.GenerateContentConfig(
             tools=tools,
             system_instruction=system_prompt,
-            thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+            thinking_config=genai_types.ThinkingConfig(include_thoughts=False),
         )
 
         # Gemini aufrufen mit Function Calling
