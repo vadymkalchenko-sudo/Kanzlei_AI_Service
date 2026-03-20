@@ -876,56 +876,103 @@ async def rag_delete_document(document_id: str):
         )
 
 
-async def process_email_background_task(job_id: str, email_content_bytes: bytes, filename: str):
+def _classify_attachment(filename: str) -> tuple[str | None, bool]:
     """
-    Background task to process the email and create structures in Django
+    Gibt (mime_type, is_image) zurück.
+    is_image=True  → direkt als Gemini-Vision-Input (Bilder, Scans)
+    is_image=False → Text-Extraktion via FileExtractor (PDF, DOCX, TXT)
+    None           → nicht unterstützt
     """
+    fn = filename.lower()
+    if fn.endswith(('.jpg', '.jpeg')):
+        return 'image/jpeg', True
+    elif fn.endswith('.png'):
+        return 'image/png', True
+    elif fn.endswith('.webp'):
+        return 'image/webp', True
+    elif fn.endswith('.pdf'):
+        return 'application/pdf', False   # Text-Extraktion zuerst; Fallback auf Vision intern
+    elif fn.endswith(('.docx', '.doc', '.txt')):
+        return 'text/plain', False
+    return None, False
+
+
+async def process_email_background_task(
+    job_id: str,
+    email_content_bytes: bytes,
+    filename: str,
+    extra_attachments: list | None = None,
+):
+    """
+    Background task: E-Mail verarbeiten und Django-Strukturen anlegen.
+
+    Orchestrierung (wie V2 fine-tuned):
+    1. E-Mail parsen → Betreff + Body als Text
+    2. Anhänge klassifizieren:
+       - Bilder / Scan-PDFs → als Gemini-Vision-Input (multimodal)
+       - Text-PDFs / DOCX   → FileExtractor extrahiert Text (pypdf + Vision-Fallback)
+    3. Kombinierten Text + Vision-Parts an ai_extractor übergeben
+    4. Django-Strukturen (Mandant, Gegner, Akte, Dokumente, Ticket) anlegen
+    """
+    if extra_attachments is None:
+        extra_attachments = []
+
     try:
         # Initialize job tracking
         job_tracker.create_job(job_id)
-        logger.info(f"Job {job_id}: Starting processing for {filename}")
-        
-        # 1. Parse Email
-        email_content = await email_processor.process_email(email_content_bytes, filename)
-        logger.info(f"Job {job_id}: Extracted email subject '{email_content.subject}'")
+        logger.info(f"Job {job_id}: Starte Verarbeitung für {filename}")
 
-        # 2. Extract Data with AI
+        # ── 1. E-Mail parsen ────────────────────────────────────────────────
+        email_content = await email_processor.process_email(email_content_bytes, filename)
+        logger.info(f"Job {job_id}: E-Mail geparst — Betreff: '{email_content.subject}'")
+
+        logger.info(f"Job {job_id}: {len(email_content.attachments)} Anhänge in E-Mail gefunden: {[a.filename for a in email_content.attachments]}")
         job_tracker.update_step(job_id, 'email_analysis', 'completed', 'E-Mail analysiert')
         job_tracker.update_step(job_id, 'mandant_creation', 'processing', 'Mandant wird erstellt...')
-        # Gather attachments for multimodal analysis
-        ai_attachments = []
-        supported_types = ["image/jpeg", "image/png", "image/webp", "application/pdf"]
-        
+
+        # ── 2. Anhänge klassifizieren: Text-Extraktion (Crawler) + Vision ──
+        text_parts = [f"Betreff: {email_content.subject}\n\nE-Mail Text:\n{email_content.body}"]
+        ai_attachments = []   # Bilder / Scan-PDFs → Gemini Vision
+
+        def _process_attachment_bytes(content: bytes, fname: str, label: str):
+            """Extrahiert Text oder bereitet Vision-Input vor."""
+            mime, is_image = _classify_attachment(fname)
+            if mime is None:
+                return
+            if is_image:
+                # Direkt als multimodales Vision-Input
+                ai_attachments.append({"mime_type": mime, "data": content})
+                logger.info(f"Job {job_id}: Vision-Input: {label} ({mime})")
+            else:
+                # FileExtractor: Text-Crawler (pypdf + Gemini-Vision-Fallback für Scans)
+                extracted = FileExtractor.extract_text_from_bytes(content, fname)
+                if extracted and len(extracted.strip()) >= 50:
+                    text_parts.append(f"\n=== {label} ===\n{extracted.strip()}")
+                    logger.info(f"Job {job_id}: Text extrahiert: {label} ({len(extracted)} Zeichen)")
+                else:
+                    # Fallback: als Vision-Input (z.B. Scan-PDF ohne erkennbaren Text)
+                    if mime == 'application/pdf':
+                        ai_attachments.append({"mime_type": mime, "data": content})
+                        logger.info(f"Job {job_id}: PDF als Vision-Input (kein Text): {label}")
+
+        # 2a. In der E-Mail eingebettete Anhänge
         for att in email_content.attachments:
-            # Simple mime type check - can be improved
-            is_supported = False
-            mime = "application/octet-stream" 
-            
-            if att.filename.lower().endswith(('.jpg', '.jpeg')):
-                mime = "image/jpeg"
-                is_supported = True
-            elif att.filename.lower().endswith('.png'):
-                mime = "image/png"
-                is_supported = True
-            elif att.filename.lower().endswith('.webp'):
-                mime = "image/webp"
-                is_supported = True
-            elif att.filename.lower().endswith('.pdf'):
-                mime = "application/pdf"
-                is_supported = True
-                
-            if is_supported:
-                ai_attachments.append({
-                    "mime_type": mime,
-                    "data": att.content
-                })
-        
-        # Combine subject + body
-        full_text = f"Betreff: {email_content.subject}\n\n{email_content.body}"
-        
-        # Call AI with text AND images
+            _process_attachment_bytes(att.content, att.filename, f"Anhang: {att.filename}")
+
+        # 2b. Separat hochgeladene Dateien (aus dem Modal — bisher immer verloren!)
+        for att_data in extra_attachments:
+            _process_attachment_bytes(
+                att_data['content'], att_data['filename'],
+                f"Separater Anhang: {att_data['filename']}"
+            )
+
+        # ── 3. KI-Extraktion: Text + Vision ────────────────────────────────
+        full_text = "\n\n".join(text_parts)
         case_data = await ai_extractor.extract_case_data(full_text, attachments=ai_attachments)
-        logger.info(f"Job {job_id}: AI Extraction complete (with {len(ai_attachments)} attachments)")
+        logger.info(
+            f"Job {job_id}: KI-Extraktion abgeschlossen "
+            f"({len(ai_attachments)} Vision-Parts, {len(text_parts)} Text-Teile)"
+        )
 
         # ... (Mappings remain same) ...
 
@@ -1056,15 +1103,25 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
         )
         logger.info(f"Job {job_id}: Uploaded email file")
         
-        # 7. Upload Attachments
+        # 7. Upload Attachments — eingebettete Anhänge aus der E-Mail
         for att in email_content.attachments:
             await django_client.upload_dokument(
-                akte_id=akte_id, 
-                file_content=att.content, 
+                akte_id=akte_id,
+                file_content=att.content,
                 filename=att.filename,
                 titel=att.filename
             )
-            logger.info(f"Job {job_id}: Uploaded attachment {att.filename}")
+            logger.info(f"Job {job_id}: Anhang hochgeladen: {att.filename}")
+
+        # 7b. Separat hochgeladene Dateien (aus dem Modal) ebenfalls speichern
+        for att_data in extra_attachments:
+            await django_client.upload_dokument(
+                akte_id=akte_id,
+                file_content=att_data['content'],
+                filename=att_data['filename'],
+                titel=att_data['filename']
+            )
+            logger.info(f"Job {job_id}: Separater Anhang hochgeladen: {att_data['filename']}")
         
         job_tracker.update_step(job_id, 'document_upload', 'completed', 'Dokumente hochgeladen')
         job_tracker.update_step(job_id, 'ticket_creation', 'processing', 'Ticket wird erstellt...')
@@ -1099,19 +1156,31 @@ async def process_email_background_task(job_id: str, email_content_bytes: bytes,
 async def create_akte_from_email(
     background_tasks: BackgroundTasks,
     email_file: UploadFile = File(...),
+    attachments: List[UploadFile] = File([]),
 ):
     """
-    Erstellt eine neue Akte aus E-Mail und Anhängen via Background Task
+    Erstellt eine neue Akte aus E-Mail und optionalen Anhängen via Background Task.
+    Anhänge werden per FileExtractor (Text-Crawler) + Gemini Vision analysiert.
     """
     job_id = str(uuid.uuid4())
-    
-    # Read file content immediately to avoid "closed file" in background task
+
+    # Dateiinhalte sofort lesen — Background Task darf keine offenen Streams nutzen
     content = await email_file.read()
     filename = email_file.filename
-    
-    # Start processing in background with bytes
-    background_tasks.add_task(process_email_background_task, job_id, content, filename)
-    
+
+    extra_attachment_data: List[dict] = []
+    for att in attachments:
+        att_bytes = await att.read()
+        extra_attachment_data.append({
+            'filename': att.filename or 'anhang',
+            'content': att_bytes,
+        })
+
+    background_tasks.add_task(
+        process_email_background_task,
+        job_id, content, filename, extra_attachment_data,
+    )
+
     return {
         "status": "accepted",
         "job_id": job_id,

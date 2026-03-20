@@ -125,23 +125,38 @@ class EmailProcessor:
         return body
 
     def _get_attachments(self, msg: Message) -> List[EmailAttachment]:
-        """Extract attachments from EML"""
+        """Extract attachments from EML.
+
+        Kein Content-Disposition-Check — Outlook-generierte .eml-Dateien
+        haben Anhänge oft ohne Content-Disposition-Header (nur Name in
+        Content-Type: name=...). Stattdessen: Body-Parts (text/plain,
+        text/html ohne attachment-Disposition) überspringen, alles andere
+        mit Dateinamen aufnehmen.
+        """
         attachments = []
         for part in msg.walk():
             if part.get_content_maintype() == 'multipart':
                 continue
-            if part.get('Content-Disposition') is None:
+
+            content_type = part.get_content_type()
+            content_disposition = str(part.get('Content-Disposition', ''))
+
+            # Body-Teile überspringen (kein Anhang)
+            if content_type in ('text/plain', 'text/html') and 'attachment' not in content_disposition:
                 continue
 
             filename = part.get_filename()
-            if filename:
-                content = part.get_payload(decode=True)
-                if content:
-                    attachments.append(EmailAttachment(
-                        filename=filename,
-                        content=content,
-                        content_type=part.get_content_type()
-                    ))
+            if not filename:
+                continue
+
+            content = part.get_payload(decode=True)
+            if content:
+                attachments.append(EmailAttachment(
+                    filename=filename,
+                    content=content,
+                    content_type=content_type
+                ))
+                logger.info(f"Anhang gefunden: {filename} ({content_type}, {len(content)} Bytes)")
         return attachments
 
 email_processor = EmailProcessor()
