@@ -1065,7 +1065,7 @@ async def process_email_background_task(
                 # Neue Fahrzeugdaten
                 "kfz_typ": case_data.fahrzeug.typ,
                 "kfz_kw_ps": case_data.fahrzeug.kw,
-                "kfz_ez": case_data.fahrzeug.ez,
+                "kfz_ez": _iso_to_de_datum(case_data.fahrzeug.ez),
                 
                 # Defaults
                 "polizei": False,
