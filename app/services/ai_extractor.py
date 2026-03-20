@@ -66,6 +66,19 @@ class CaseData(BaseModel):
     # handlungsbedarf removed
 
 
+def _clean_zero_strings(obj):
+    """Bereinigt '0'-Strings → '' (Gemini liefert manchmal '0' statt '' für leere Textfelder).
+    Verhindert falsche Kollisionsprüfungs-Treffer (z.B. Kennzeichen '0').
+    Numerische 0-Werte (int/float) bleiben unverändert."""
+    if isinstance(obj, dict):
+        return {k: _clean_zero_strings(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean_zero_strings(v) for v in obj]
+    if obj == "0":
+        return ""
+    return obj
+
+
 class AIExtractor:
     def __init__(self):
         self.configure_genai()
@@ -242,7 +255,11 @@ class AIExtractor:
                         json_str = json_str[4:]
                 
                 data = json.loads(json_str)
-                
+
+                # Bereinigung: Gemini liefert manchmal "0" statt "" für leere Textfelder.
+                # Das führt zu Kollisionsprüfungs-Fehlern (Kennzeichen "0" wird als real erkannt).
+                data = _clean_zero_strings(data)
+
                 # Log metrics
                 total_time = time.time() - start_time
                 fields_count = sum(1 for field in data.values() if field)
