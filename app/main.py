@@ -659,8 +659,20 @@ async def rag_generate_draft(request: RagDraftRequest):
         from app.services.rag_store import rag_store
         from app.services.orchestrator import orchestrator_service
         
-        # 1. Sammle Kontext (Ähnliche Fälle)
-        filter_dict = {"fall_typ": request.fall_typ} if request.fall_typ else None
+        # 1. Sammle Kontext — primär nach Brieftyp-Kategorie filtern,
+        #    damit Mdt.-Muster niemals mit Vers.-Mustern vermischt werden.
+        EMPFAENGER_KATEGORIE = {
+            'mandant':      'Erstanschreiben Mdt.',
+            'versicherung': 'Erstanschreiben Versicherung',
+        }
+        empfaenger_typ = request.empfaenger_typ or 'versicherung'
+        rag_kategorie = EMPFAENGER_KATEGORIE.get(empfaenger_typ)
+        if rag_kategorie:
+            filter_dict = {"fall_typ": rag_kategorie}
+        elif request.fall_typ:
+            filter_dict = {"fall_typ": request.fall_typ}
+        else:
+            filter_dict = None
         
         # Erzeuge einen Suchstring aus Notizen + relevanten Falldaten
         query_parts = [request.notizen]
