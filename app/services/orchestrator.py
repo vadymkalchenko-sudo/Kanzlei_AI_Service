@@ -22,16 +22,19 @@ SYSTEM_PROMPT_VERSICHERUNG = (
 
 SYSTEM_PROMPT_MANDANT = (
     "Du bist ein freundlicher KI-Assistent für eine Anwaltskanzlei (Verkehrsrecht). "
-    "Deine Aufgabe ist es, eine Sachstandsinformation für den eigenen Mandanten zu verfassen. "
+    "Deine Aufgabe ist es, ein Erstanschreiben an den eigenen Mandanten zu verfassen. "
     "WICHTIGE REGELN:\n"
     "- Kein Briefkopf, keine Absender-/Empfängeradressen, kein Datum, kein Betreff, "
     "KEINE Anrede, KEINE Grußformel — diese Teile werden vom System automatisch eingefügt.\n"
     "- Schreibe NUR den reinen Fließtext des Briefes (ab dem ersten inhaltlichen Satz).\n"
-    "- Der Ton ist freundlich, verständlich und informierend — KEIN juristischer Fachjargon, keine Paragraphen-Zitate.\n"
-    "- Erkläre dem Mandanten kurz und klar, was bisher unternommen wurde und wie der aktuelle Stand ist.\n"
-    "- Der Brief dient zur Kenntnisnahme, nicht zur Forderungsstellung.\n"
-    "- Keine Fristen setzen, keine Zahlungsaufforderungen.\n"
-    "- Schreibe in der Wir-Form (die Kanzlei schreibt an den Mandanten)."
+    "- Der Ton ist freundlich, verständlich und persönlich — KEIN juristischer Fachjargon, keine Paragraphen-Zitate.\n"
+    "- Schreibe in der Wir-Form (die Kanzlei schreibt an den Mandanten).\n"
+    "- Der Brief hat folgende feste Struktur (alle drei Punkte MÜSSEN enthalten sein):\n"
+    "  1. Mandatsübernahme bestätigen: Wir haben Ihr Mandat übernommen und sind ab sofort für Sie tätig.\n"
+    "  2. Maßnahmen zur Kenntnisnahme: Wir haben heute das Erstanschreiben an die gegnerische Versicherung versandt "
+    "(beigefügt zur Kenntnisnahme). Den Inhalt kurz für den Mandanten zusammenfassen — verständlich, ohne Juristendeutsch.\n"
+    "  3. Handlungsanweisung: Sollte sich die Versicherung oder eine andere Partei direkt an den Mandanten wenden, "
+    "ist jede Kommunikation unbeantwortet an uns weiterzuleiten. Der Mandant soll sich auf keinen Fall selbst einlassen."
 )
 
 
@@ -63,9 +66,11 @@ class OrchestratorService:
         # 3. Super Prompt zusammenbauen
         system_prompt = SYSTEM_PROMPT_MANDANT if empfaenger_typ == 'mandant' else SYSTEM_PROMPT_VERSICHERUNG
         aufgabe = (
-            "Schreibe eine freundliche Sachstandsinformation für den Mandanten. "
-            "Erkläre kurz, was bisher unternommen wurde. Kein Fachjargon, keine Paragraphen. "
-            "Gib NUR den Fließtext ohne Metakommentar zurück."
+            "Schreibe das Erstanschreiben an den Mandanten mit ALLEN drei Pflichtpunkten: "
+            "1) Mandatsübernahme bestätigen, "
+            "2) Kurze verständliche Zusammenfassung was wir an die Versicherung geschrieben haben (Anlage beifügen zur Kenntnisnahme), "
+            "3) Handlungsanweisung: jede direkte Kontaktaufnahme durch Versicherung oder Gegner unbeantwortet an uns weiterleiten. "
+            "Kein Fachjargon, keine Paragraphen. Gib NUR den Fließtext ohne Metakommentar zurück."
             if empfaenger_typ == 'mandant' else
             "Schreibe unter extremer Berücksichtigung der Beispiele im Wissen oben nun das perfekte Erstanschreiben für diesen neuen Fall. "
             "Erfinde keine Daten hinzu, die nicht im Fragebogen stehen. "
@@ -121,6 +126,7 @@ AUFGABE:
         except Exception as e:
             logger.error(f"Fehler beim Vertex/Gemini Call: {e}")
             return "Fehler bei der Kommunikation mit der Künstlichen Intelligenz."
+        return "Fehler bei der Textgenerierung."
 
 # Singleton
 orchestrator_service = OrchestratorService()
