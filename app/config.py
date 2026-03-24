@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
 
-    # Vertex AI (Produktion — DSGVO, EU-Region europe-west4)
+    # Vertex AI (Produktion — DSGVO, EU-Region europe-west3 = Frankfurt)
     vertex_project_id: str = ""
-    vertex_location: str = "europe-west4"
+    vertex_location: str = "europe-west3"
     vertex_model: str = "gemini-2.5-flash"
     google_application_credentials: str = "/app/google_service_account.json"
 
