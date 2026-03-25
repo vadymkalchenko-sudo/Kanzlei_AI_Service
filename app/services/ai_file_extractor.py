@@ -163,9 +163,8 @@ class FileExtractor:
         """
         Nutzt Gemini Vision um Text aus Bildern oder Scan-PDFs zu extrahieren.
 
-        Gleicher Mechanismus wie bei der Aktenanlage (ai_extractor.py):
-        Bytes + MIME-Type direkt an Gemini — keine zusätzlichen Libraries nötig.
-        Gemini versteht nativ: image/jpeg, image/png, application/pdf.
+        Nutzt denselben Client wie ai_extractor.py (Vertex AI oder Gemini API
+        je nach LLM_PROVIDER) — kein hardcodierter API-Key mehr.
 
         Besonders wertvoll für:
         - Kfz-Gutachten (Schadensfotos mit Markierungen, Kostentabellen als Bild)
@@ -173,28 +172,51 @@ class FileExtractor:
         - Fahrzeugscheine (Scan/Foto)
         """
         try:
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types as genai_types
             from app.config import settings
 
-            if not settings.gemini_api_key:
-                logger.warning("GEMINI_API_KEY nicht gesetzt — Vision-Extraktion übersprungen")
-                return ""
+            # Client identisch mit ai_extractor.py aufbauen
+            if settings.llm_provider == "vertex":
+                if not settings.vertex_project_id:
+                    logger.error("VERTEX_PROJECT_ID nicht konfiguriert — Vision-Extraktion übersprungen")
+                    return ""
+                import os
+                if settings.google_application_credentials:
+                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
+                client = genai.Client(
+                    vertexai=True,
+                    project=settings.vertex_project_id,
+                    location=settings.vertex_location,
+                )
+                model_name = settings.gemini_model
+                logger.info(f"[LLM: VERTEX AI] Vision-Extraktion | Modell: {model_name}")
+            else:
+                if not settings.gemini_api_key:
+                    logger.warning("GEMINI_API_KEY nicht gesetzt — Vision-Extraktion übersprungen")
+                    return ""
+                client = genai.Client(api_key=settings.gemini_api_key)
+                model_name = settings.gemini_model
+                logger.info(f"[LLM: GEMINI API] Vision-Extraktion | Modell: {model_name}")
 
-            genai.configure(api_key=settings.gemini_api_key)
-            model = genai.GenerativeModel(settings.gemini_model)
-
-            response = model.generate_content([
+            prompt = (
                 "Extrahiere den vollständigen Text aus diesem Dokument. "
                 "Behalte alle Zahlen, Datumsangaben, Adressen, Namen, "
                 "Kennzeichen, Schadensbeträge und Tabelleninhalte vollständig. "
-                "Gib nur den extrahierten Text zurück, keine Erklärungen.",
-                {"mime_type": mime_type, "data": content},
-            ])
+                "Gib nur den extrahierten Text zurück, keine Erklärungen."
+            )
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[
+                    prompt,
+                    genai_types.Part.from_bytes(data=content, mime_type=mime_type),
+                ],
+            )
 
             text = response.text.strip() if response.text else ""
-            logger.info(f"Gemini Vision: {len(text)} Zeichen extrahiert ({mime_type})")
+            logger.info(f"Vision-Extraktion: {len(text)} Zeichen extrahiert ({mime_type})")
             return text
 
         except Exception as e:
-            logger.error(f"Gemini Vision Fehler ({mime_type}): {e}")
+            logger.error(f"Vision-Extraktion Fehler ({mime_type}): {e}")
             return ""
