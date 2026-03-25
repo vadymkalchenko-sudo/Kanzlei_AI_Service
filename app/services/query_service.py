@@ -311,11 +311,6 @@ class QueryService:
     """
 
     def __init__(self):
-        self.gemini_api_key = settings.gemini_api_key
-        self.gemini_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{settings.gemini_model}:generateContent?key={self.gemini_api_key}"
-        )
         self.django_base = settings.backend_url.rstrip("/")
         self.django_headers = {
             "Authorization": f"Bearer {settings.backend_api_token}",
@@ -324,10 +319,11 @@ class QueryService:
 
     async def handle_query(self, query: str, user_id: int, akte_id: Optional[int] = None) -> Dict[str, Any]:
         """
-        Haupteinstiegspunkt: Freitext → Gemini → Tool-Call → Django → formatiertes Ergebnis.
+        Haupteinstiegspunkt: Freitext → Gemini/Vertex → Tool-Call → Django → formatiertes Ergebnis.
         """
-        if not self.gemini_api_key:
-            return {"status": "error", "error": "Gemini API Key nicht konfiguriert."}
+        from app.main import get_gemini_client
+        if not get_gemini_client():
+            return {"status": "error", "error": "KI-Dienst nicht bereit."}
 
         # cast for pyre
         safe_query = str(query) if query else ""
@@ -368,46 +364,41 @@ class QueryService:
 
     async def _classify_with_gemini(self, query: str) -> Optional[Dict[str, Any]]:
         """
-        Sendet die Anfrage an Gemini mit Function Calling.
+        Sendet die Anfrage an Gemini/Vertex mit Function Calling (neues SDK).
         Gibt den gewählten Tool-Call zurück oder None wenn kein Tool passt.
         """
+        from app.main import get_gemini_client
+        from google.genai import types as genai_types
+
+        gemini = get_gemini_client()
+        if not gemini:
+            return None
+
         system_text = (
             "Du bist eine KI-Sekretärin für eine Kanzlei (Verkehrsrecht). "
             "Analysiere die Anfrage und wähle das passende Werkzeug aus. "
             "Wähle genau ein Werkzeug. Wenn keine Anfrage zu den Werkzeugen passt, "
             "antworte ohne Werkzeug-Aufruf."
         )
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": f"{system_text}\n\nAnfrage: {query}"}],
-                }
-            ],
-            "tools": [{"function_declarations": TOOL_DECLARATIONS}],
-            "tool_config": {
-                "function_calling_config": {"mode": "AUTO"}
-            },
-            "generationConfig": {
-                "temperature": 0.0,  # Deterministisch für Tool-Auswahl
-            },
-        }
+
+        config = genai_types.GenerateContentConfig(
+            tools=[{"function_declarations": TOOL_DECLARATIONS}],
+            system_instruction=system_text,
+            temperature=0.0,
+        )
 
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.post(self.gemini_url, json=payload)
-                response.raise_for_status()
-                data = response.json()
+            response = await gemini.client.aio.models.generate_content(
+                model=gemini.model_name,
+                contents=query,
+                config=config,
+            )
 
-            candidates = data.get("candidates", [])
-            if not candidates:
-                logger.warning("Gemini lieferte keine Candidates zurück.")
-                return None
-
-            parts = candidates[0].get("content", {}).get("parts", [])
-            for part in parts:
-                if "functionCall" in part:
-                    return part["functionCall"]
+            if response.candidates and response.candidates[0].content.parts:
+                for part in response.candidates[0].content.parts:
+                    fc = getattr(part, "function_call", None)
+                    if fc:
+                        return {"name": fc.name, "args": dict(fc.args)}
 
             logger.info("Gemini hat kein Tool gewählt (kein passender Befehl).")
             return None
@@ -441,46 +432,42 @@ class QueryService:
             context_texts.append(match.get("text", ""))
         context_str = "\n\n---\n\n".join(context_texts)
         
-        # 3. Gemini Response generieren
+        # 3. Antwort via neuem SDK generieren (Vertex AI oder Gemini)
+        from app.main import get_gemini_client
+        from google.genai import types as genai_types
+
+        gemini = get_gemini_client()
+        if not gemini:
+            return {"status": "error", "error": "KI-Dienst nicht bereit."}
+
         system_prompt = (
             "Du bist ein hilfreicher Assistent für das Kanzlei-Programm. "
             "Beantworte die Frage des Nutzers AUSSCHLIESSLICH basierend auf dem folgenden System-Wissen. "
             "Erfinde keine Funktionen hinzu. Halte dich kurz und prägnant."
         )
-        
-        prompt = f"{system_prompt}\n\nSYSTEM-WISSEN:\n{context_str}\n\nFRAGE DES NUTZERS:\n{query}"
-        
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2}
-        }
-        
+        prompt = f"SYSTEM-WISSEN:\n{context_str}\n\nFRAGE DES NUTZERS:\n{query}"
+
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(self.gemini_url, json=payload)
-                response.raise_for_status()
-                data = response.json()
-                
-                candidates = data.get("candidates", [])
-                if candidates and "content" in candidates[0] and "parts" in candidates[0]["content"]:
-                    answer_text = candidates[0]["content"]["parts"][0].get("text", "")
-                    return {
-                        "status": "ok",
-                        "result_type": "text",
-                        "data": answer_text,
-                        "query_used": "rag_system_wissen",
-                    }
-                else:
-                    return {
-                        "status": "error",
-                        "error": "Konnte keine Antwort aus dem System-Wissen generieren."
-                    }
+            response = await gemini.client.aio.models.generate_content(
+                model=gemini.model_name,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.2,
+                ),
+            )
+            answer_text = response.text.strip() if response.text else ""
+            if answer_text:
+                return {
+                    "status": "ok",
+                    "result_type": "text",
+                    "data": answer_text,
+                    "query_used": "rag_system_wissen",
+                }
+            return {"status": "error", "error": "Konnte keine Antwort aus dem System-Wissen generieren."}
         except Exception as e:
             logger.error(f"Fehler bei der Fallback-Antwort Generierung: {e}")
-            return {
-                "status": "error",
-                "error": "Fehler bei der Formulierung der System-Antwort."
-            }
+            return {"status": "error", "error": "Fehler bei der Formulierung der System-Antwort."}
 
     # -----------------------------------------------------------------------
     # Tool-Dispatch → Django /api/ai/query/* Endpoints

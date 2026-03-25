@@ -218,5 +218,21 @@ class FileExtractor:
             return text
 
         except Exception as e:
+            # Automatischer Fallback: Vertex → Gemini API (identisch mit ai_extractor.py)
+            if settings.llm_provider == "vertex" and settings.gemini_api_key:
+                logger.warning(f"[FALLBACK] Vision-Extraktion Vertex-Fehler: {e} — wechsle zu Gemini API...")
+                try:
+                    fallback_client = genai.Client(api_key=settings.gemini_api_key)
+                    response = fallback_client.models.generate_content(
+                        model=settings.gemini_model,
+                        contents=[
+                            prompt,
+                            genai_types.Part.from_bytes(data=content, mime_type=mime_type),
+                        ],
+                    )
+                    return response.text.strip() if response.text else ""
+                except Exception as fallback_err:
+                    logger.error(f"Fallback Vision-Extraktion fehlgeschlagen: {fallback_err}")
+                    return ""
             logger.error(f"Vision-Extraktion Fehler ({mime_type}): {e}")
             return ""
