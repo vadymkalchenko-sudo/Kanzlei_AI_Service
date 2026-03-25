@@ -60,20 +60,24 @@ ki_memory-Schlüssel: "mandat_erfasst_minimaldaten_vollstaendig"
 
 ### Stufe 2: Erstanschreiben Doppelpack — Versicherung UND Mandant (Voraussetzungen: Minimaldaten vollständig)
 Erkennungsmerkmale in der Akte: Vollmacht vorhanden, Unfalldatum und Unfallort bekannt, gegnerische Versicherung bekannt, noch kein Erstanschreiben in der Akte.
-LOKI-TRIGGER: Sobald diese Erkennungsmerkmale zutreffen, sofort vorschlagen: "Alle Angaben für das Erstanschreiben liegen vor. Soll ich beide Schreiben erstellen — an Versicherung und an Mandant?"
-Nächste Schritte:
-- SCHRITT 2A — Erstanschreiben an gegnerische Haftpflichtversicherung gemäß § 115 VVG, §§ 7, 18 StVG erstellen.
-  Unfallhergang aus Fragebogen schildern, Haftungsübernahme fordern.
+LOKI-TRIGGER: Sobald diese Erkennungsmerkmale zutreffen, sofort vorschlagen: "Alle Angaben für das Erstanschreiben liegen vor. Soll ich mit dem Entwurf an die Versicherung beginnen?"
+Nächste Schritte (ZWINGEND SEQUENZIELL — niemals beide Briefe gleichzeitig erstellen):
+- SCHRITT 2A — Erstanschreiben an Versicherung als Entwurf zeigen (KEIN direktes Speichern):
+  Unfallhergang aus Fragebogen schildern, Haftungsübernahme gemäß § 115 VVG, §§ 7, 18 StVG fordern.
   Frist von 14 Tagen ab Zugang setzen (PFLICHT gemäß Fristen-Grundregel).
   Falls Gutachten bereits vorhanden: dem Schreiben beifügen und Schadenshöhe beziffern.
   Falls kein Gutachten vorhanden: Schreiben ohne Schadenshöhe, Nachforderung nach Gutachteneingang.
-- SCHRITT 2B — Erstanschreiben an Mandant SOFORT im Anschluss erstellen (PFLICHT, nicht optional).
+  → Entwurf zeigen, warten auf Bestätigung oder Korrekturwunsch des Users.
+  → Erst nach ausdrücklicher Bestätigung ("Ja", "Ok", "Speichern") den Brief speichern.
+- SCHRITT 2B — Erst NACH Speicherung von 2A: Entwurf an Mandant zeigen (KEIN direktes Speichern):
   Inhalt (kurz und knapp, drei Punkte):
   1. Mandatsübernahme bestätigen: Wir haben Ihr Mandat übernommen und sind ab sofort für Sie tätig.
   2. Anlage zur Kenntnisnahme: Das Erstanschreiben an die Versicherung ist beigefügt.
   3. Handlungsanweisung: Jegliche Kommunikation seitens der gegnerischen Versicherung oder sonstiger Dritter zu diesem Fall bitte NICHT beantworten — unkommentiert und unverändert an uns weiterleiten.
   Ton: Freundlich, klar, kein Juristendeutsch.
-- Aufgabe erstellen: "Antwort Versicherung abwarten — Frist [Datum in 14 Tagen]".
+  → Entwurf zeigen, warten auf Bestätigung oder Korrekturwunsch des Users.
+  → Erst nach ausdrücklicher Bestätigung den Brief speichern.
+- SCHRITT 2C — Nach Speicherung beider Briefe: Aufgabe erstellen: "Antwort Versicherung abwarten — Frist [Datum in 14 Tagen]".
 Warum das Mandantenschreiben unverzichtbar ist:
   Das Erstanschreiben an den Mandanten ist die erste und oft lange Zeit einzige schriftliche Bestätigung,
   dass die Kanzlei die Tätigkeit aufgenommen hat. Es dokumentiert nach außen (Mandant, Versicherung, Gericht)
