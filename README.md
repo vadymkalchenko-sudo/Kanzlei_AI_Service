@@ -1,120 +1,106 @@
 # Kanzlei AI Service
 
-KI-gestützter Service für die automatisierte Aktenanlage und Dokumentenverarbeitung.
+KI-Backend für das Kanzlei V3 System (FastAPI, ChromaDB RAG, Gemini/Vertex AI).
 
 ## Übersicht
 
-Dieser Service läuft **separat** von der Haupt-Anwendung und kommuniziert ausschließlich über REST API.
-
-**Entwicklung:** Google Gemini API  
-**Produktion:** Lokales LLM (Loki)
-
-## Architektur
+Läuft **separat** von der Hauptanwendung. Kommuniziert ausschließlich über REST API.
+Kein direkter Datenbankzugriff — alle Daten über Django REST API.
 
 ```
-Frontend → Django Backend → AI Service → Gemini API / Loki
-                ↓
-           PostgreSQL
+Frontend → Django Backend (8001) → AI Service (5000) → Vertex AI / Gemini API / Loki
 ```
 
-**Wichtig:** AI Service hat **KEINEN** direkten Datenbankzugriff!  
-Alle Daten werden über Django REST API ausgetauscht.
+**Entwicklung:** `LLM_PROVIDER=gemini` (API-Key)
+**Produktion:** `LLM_PROVIDER=vertex` (Service Account, europe-west3/Frankfurt, DSGVO-konform)
 
 ## Features
 
-- ✅ E-Mail + Anhänge analysieren
-- ✅ Automatische Aktenanlage
-- ✅ Stammdaten-Extraktion
-- ✅ Dokumenten-Klassifizierung
-- ✅ Ticket-Erstellung für Review
+- ✅ E-Mail + Anhänge KI-Extraktion → automatische Aktenanlage
+- ✅ RAG (ChromaDB) — `system_wissen`, `kanzlei_wissen`, `akte_dokumente`
+- ✅ Loki Chat (Akte-Chat, Freitext, MCP-Sekretärin mit Tools)
+- ✅ Falltyp-Erkennung + Workflow-Engine (aktenübergreifendes Grundwissen)
+- ✅ Brief-Generierung (Versicherungsschreiben + Mandantenschreiben)
+- ✅ Vorlagen-Empfehlung via RAG
+- ✅ Vertex AI (Prod) / Gemini API (Dev) — gleiche Codebase, nur `.env` unterscheidet
 
-## Installation
-
-### Voraussetzungen
-
-- Python 3.11+
-- Google Gemini API Key (Entwicklung)
-
-### Setup
+## Setup (Entwicklung)
 
 ```bash
-# Virtual Environment erstellen
+# Virtual Environment
 python -m venv venv
-venv\Scripts\activate  # Windows
+venv\Scripts\activate   # Windows
 
-# Dependencies installieren
+# Dependencies
 pip install -r requirements.txt
 
-# Environment-Variablen setzen
+# Environment
 cp .env.example .env
-# .env bearbeiten: GEMINI_API_KEY, BACKEND_URL, etc.
+# .env bearbeiten: GEMINI_API_KEY, BACKEND_URL, BACKEND_API_TOKEN
 ```
 
-### Starten
+## Starten (lokal)
 
 ```bash
-# Entwicklung
+# Empfohlen: über Docker (wegen chroma-hnswlib DLL auf Windows)
+cd c:/Entwicklung/Kanzlei_AI_Service
+docker compose up -d
+
+# Alternativ direkt (wenn ChromaDB läuft):
 uvicorn app.main:app --reload --port 5000
-
-# Produktion
-uvicorn app.main:app --host 0.0.0.0 --port 5000
 ```
 
-## API Endpoints
+## Wichtige API-Endpunkte
 
-### Health Check
-```
-GET /health
-```
+| Methode | Pfad | Beschreibung |
+|---|---|---|
+| GET | `/health` | Service-Status + Provider-Info |
+| POST | `/extract` | E-Mail/Dokument KI-Extraktion |
+| POST | `/rag/feed` | Dokument in RAG einspeisen |
+| GET | `/rag/stats` | RAG Füllstand (alle Collections) |
+| POST | `/suggest/vorlagen` | Vorlagen-Empfehlung via RAG |
+| POST | `/akte/chat` | Loki Akte-Chat |
+| GET | `/loki/status` | Loki/Ollama Server-Status |
 
-### Neue Akte erstellen
-```
-POST /api/akte/create-from-email
-Content-Type: multipart/form-data
+API-Doku: `http://localhost:5000/docs`
 
-{
-  "email_file": <file>,
-  "attachments": [<files>]
-}
-```
+## RAG Collections
 
-## Konfiguration
+| Collection | Inhalt | Laden |
+|---|---|---|
+| `system_wissen` | Workflow-Dokumente, Falltyp-Abläufe | `scripts/load_system_doku.py` |
+| `kanzlei_wissen` | Referenzschreiben, Goldstandard-Briefe | RAG Dashboard im Frontend |
+| `akte_dokumente` | Hochgeladene Dokumente je Akte | Automatisch beim Upload |
 
-Siehe `.env.example` für alle verfügbaren Umgebungsvariablen.
-
-## Entwicklung
-
-### Projekt-Struktur
-
-```
-app/
-├── main.py              # FastAPI App
-├── config.py            # Konfiguration
-├── services/
-│   ├── gemini_client.py # Gemini API Integration
-│   ├── loki_client.py   # Lokales LLM (später)
-│   ├── email_parser.py  # E-Mail Parsing
-│   └── akte_creator.py  # Akten-Logik
-└── models/
-    └── schemas.py       # Pydantic Models
+### system_wissen neu laden:
+```bash
+docker exec kanzlei-ai-service python scripts/load_system_doku.py
 ```
 
-## Integration mit Haupt-App
+## LLM Provider
 
-Dieser Service ist als **Git Submodule** in `Kanzlei_V2_final` eingebunden:
+| Provider | Umgebung | Auth | Modell |
+|---|---|---|---|
+| `gemini` | Entwicklung | API-Key | gemini-2.5-flash |
+| `vertex` | **Produktion** (DSGVO!) | Service Account | gemini-2.5-flash, europe-west3 |
+| `loki` | Fallback | — | llama-vision-work + qwen-work |
+
+Logging-Label in Service-Logs: `[LLM: VERTEX AI]` / `[LLM: GEMINI API]`
+
+## Deployment (Produktion)
 
 ```bash
-cd Kanzlei_V2_final
-git submodule add https://github.com/vadymkalchenko-sudo/Kanzlei_AI_Service.git ai-service
+# Server: /opt/Kanzlei_AI_Service
+git pull
+docker compose -f docker-compose.yml --env-file .env.production up -d --build
 ```
 
-## Deployment
-
-**Entwicklung:** Läuft auf Dev-Server neben Django  
-**Produktion:** Läuft auf Loki-Rechner (WakeOnLAN bei Bedarf)
-
-Siehe `DEPLOYMENT.md` für Details.
+Voraussetzungen Vertex AI:
+1. Vertex AI API im GCP-Projekt aktiviert
+2. Service Account mit Rolle "Vertex AI User"
+3. `google_service_account.json` vorhanden (wird gemountet)
+4. `.env.production`: `LLM_PROVIDER=vertex` + `VERTEX_PROJECT_ID` + `VERTEX_LOCATION=europe-west3`
 
 ## Lizenz
 
-Proprietär - Nur für interne Nutzung.
+Proprietär — nur für interne Nutzung.

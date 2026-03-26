@@ -24,7 +24,7 @@ Vorlagen-Empfehlungen und Dokumenten-Verarbeitung bereit.
 | Framework    | FastAPI (Python)                                        |
 | RAG-DB       | ChromaDB (lokale Datei-Datenbank)                       |
 | LLM Lokal    | Google Gemini 2.5 Flash (API-Key, `LLM_PROVIDER=gemini`)|
-| LLM Prod     | Vertex AI — Gemini 2.5 Flash, europe-west4 (`LLM_PROVIDER=vertex`) |
+| LLM Prod     | Vertex AI — Gemini 2.5 Flash, europe-west3/Frankfurt (`LLM_PROVIDER=vertex`) |
 | LLM Fallback | Ollama/Loki (lokal, 10.10.10.5, `LLM_PROVIDER=loki`)   |
 | Embeddings   | text-embedding-004 (Google API)                         |
 | Server       | Uvicorn (Port 5000)                                     |
@@ -41,11 +41,12 @@ Kanzlei_AI_Service/
 │   ├── job_tracker.py             # Async Job-Tracking
 │   └── services/
 │       ├── rag_store.py           # ChromaDB RAG-Implementierung ⚠️ KRITISCH
-│       ├── orchestrator.py        # Workflow-Orchestrierung
+│       ├── orchestrator.py        # Brief-Generierung (Versicherung + Mandant)
+│       ├── query_service.py       # Loki Chat, Falltyp-Erkennung, Workflow-Engine ⚠️ KERNSTÜCK
 │       ├── ai_extractor.py        # KI-Extraktion (E-Mail/Dokumente)
 │       ├── ai_file_extractor.py   # Datei-Extraktion
 │       ├── loki_client.py         # Loki/Ollama Client (Hybrid 2-Model)
-│       ├── gemini_client.py       # Gemini Client
+│       ├── gemini_client.py       # Gemini/Vertex Client
 │       ├── vorlagen_suggest_service.py  # Vorlagen-Empfehlung via RAG
 │       ├── backend_client.py      # HTTP-Client für Kanzlei V3 Backend
 │       ├── django_client.py       # Django-API Client
@@ -54,6 +55,13 @@ Kanzlei_AI_Service/
 ├── uploads/                       # Temp. Uploads (in .gitignore)
 ├── logs/                          # Log-Dateien (in .gitignore)
 ├── rag_storage/                   # ⚠️ ChromaDB Daten – NIEMALS LÖSCHEN!
+├── rag_data/
+│   └── system_doku/               # Workflow-Dokumente → system_wissen RAG Collection
+│       ├── workflow_verkehrsunfall_haftpflicht.md  # ← NEU 25.03.2026
+│       ├── loki_befehle.md
+│       ├── akten.md, mandanten.md, ...
+├── scripts/
+│   └── load_system_doku.py        # Lädt system_doku/ → ChromaDB system_wissen
 ├── .env                           # Secrets (in .gitignore)
 ├── .env.example                   # Vorlage für .env
 ├── requirements.txt
@@ -164,7 +172,7 @@ uvicorn app.main:app --reload --port 5000
 | Provider | Umgebung | Auth | Modell |
 |---|---|---|---|
 | `gemini` | Lokal / Entwicklung | API-Key | gemini-2.5-flash |
-| `vertex` | **Produktion** (DSGVO!) | Service Account | gemini-2.5-flash, europe-west4 |
+| `vertex` | **Produktion** (DSGVO!) | Service Account | gemini-2.5-flash, europe-west3 (Frankfurt) |
 | `loki` | Fallback (GPU-Server) | — | llama-vision-work + qwen-work |
 
 **Logging-Label** in den Service-Logs:
@@ -181,6 +189,41 @@ uvicorn app.main:app --reload --port 5000
 
 ### Rollback
 Branch `gemini-ohne-vertex` = Stand vor Vertex-Migration (Gemini Developer API)
+
+---
+
+## Loki Chat & Workflow-Engine (`query_service.py`)
+
+> Stand: 25.03.2026 — Deployed & aktiv
+
+### Zwei-Schichten-Wissen:
+
+| Schicht | Inhalt | Gültigkeitsbereich |
+|---|---|---|
+| `system_wissen` (RAG) | Workflow-Dokumente, Falltyp-Abläufe, Loki-Befehle | **Aktenübergreifend** — gilt für alle Akten |
+| `ki_memory` (pro Akte) | Aktuelle Stufe, notierte Besonderheiten | **Nur diese Akte** |
+
+### Falltyp-Erkennung (`_erkenne_falltyp()`):
+1. Prüft ki_memory auf gespeicherten Falltyp
+2. Prüft Fragebogen-Felder (`personenschaden`, `datum_zeit`, `gegner_kennzeichen`)
+3. Schlüsselwort-Matching auf Ziel/Gegner-Feldern
+4. Fallback: `"unbekannt"` → kein Workflow geladen, User wird um Klarstellung gebeten
+
+### Workflow-Laden (`_lade_workflow_kontext()`):
+- Sucht `n_results=4` aus `system_wissen` mit Filter `{"typ": "system_doku"}`
+- Query: `"Workflow Ablauf Stufen {falltyp}"`
+- Ergebnis wird als Block `WORKFLOW-WISSEN` in den System-Prompt injiziert
+
+### Wichtige Regeln im System-Prompt (Brief-Generierung):
+- **KEIN Markdown** in Brieftext (keine `**bold**`, keine `##`, keine `-` Listen)
+- **FRISTEN-GRUNDREGEL**: Jedes Versicherungsschreiben muss Frist enthalten (14 Tage Standard)
+- **Doppelpack SEQUENZIELL**: erst Versicherungsschreiben anzeigen → User prüft → speichert → DANN Mandantenschreiben
+- **NIEMALS beide Briefe gleichzeitig** erstellen oder speichern
+
+### Workflow-Dokumente neu laden (nach Änderungen):
+```bash
+docker exec kanzlei-ai-service python scripts/load_system_doku.py
+```
 
 ---
 
