@@ -1158,6 +1158,7 @@ AKTIVER TAB: {active_tab}
 {_tab_hinweis(active_tab)}
 
 WICHTIGE REGELN:
+- ABSOLUTES MARKDOWN-VERBOT: Verwende in KEINER Antwort Markdown-Formatierung. Weder **Fettschrift**, noch *Kursivschrift*, noch ## Überschriften, noch - Aufzählungszeichen, noch 1. nummerierte Listen mit Sternchen oder Rauten. Schreibe ausschließlich in normalem Fließtext mit Absätzen. Wenn du Punkte aufzählen willst, schreibe sie als Satz oder mit Ziffern ohne Sternchen.
 - Die AKTE-ID für alle Tool-Aufrufe ist: {akte_id} — verwende sie DIREKT, frage den User NIEMALS danach.
 - KI-MEMORY nach jeder bestätigten Aktion mit `aktualisiere_ki_memory` aktualisieren (nur Fakten, keine Spekulationen).
 - Wenn Falltyp erkannt und NICHT im KI-MEMORY: beim ersten Chat-Aufruf EINMALIG speichern: aktualisiere_ki_memory mit "Falltyp: {falltyp}".
@@ -1172,7 +1173,7 @@ Schritt 1 — Entwurf zeigen:
   Wenn der User einen Brief anfordert (Erstanschreiben, Sachstandsinfo, Widerspruch etc.),
   schreibe den vollständigen Brieftext ZUERST als Entwurf direkt in den Chat.
   Nur Fließtext: kein Briefkopf, kein Datum, keine Anrede, kein "Mit freundlichen Grüßen".
-  KEIN Markdown im Brieftext: keine **Fettschrift**, keine *Kursivschrift*, keine ## Überschriften, keine - Aufzählungszeichen.
+  Kein Markdown (gilt generell, siehe oben).
   Beende die Antwort mit: "Soll ich diesen Brief so speichern? (Ja / Nein oder Änderungswunsch)"
 
 Schritt 2 — Speichern nach Bestätigung:
