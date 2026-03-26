@@ -18,6 +18,21 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+import re as _re_module
+
+
+def _strip_markdown(text: str) -> str:
+    """Entfernt Markdown-Formatierung aus LLM-Antworten (Post-Processing-Fallback)."""
+    # **bold** → bold
+    text = _re_module.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    # *italic* → italic
+    text = _re_module.sub(r'\*(.+?)\*', r'\1', text)
+    # ## Überschriften → Text
+    text = _re_module.sub(r'^#{1,6}\s+', '', text, flags=_re_module.MULTILINE)
+    # - oder * Aufzählungszeichen am Zeilenanfang entfernen
+    text = _re_module.sub(r'^[-*]\s+', '', text, flags=_re_module.MULTILINE)
+    return text
+
 
 # ===========================================================================
 # TOOL-DEFINITIONEN für Gemini Function Calling
@@ -1121,6 +1136,24 @@ class QueryService:
         falltyp = await self._erkenne_falltyp(kontext, ki_memory)
         workflow_kontext = await self._lade_workflow_kontext(falltyp)
 
+        # Workflow-Lücken erkennen: Fehlende Dokumente basierend auf vorhandenen
+        workflow_luecken = []
+        titel_all = " ".join(d.get('titel', '').lower() for d in dokumente_raw)
+        hat_vers_brief = any(
+            w in d.get('titel', '').lower()
+            for d in dokumente_raw
+            for w in ('versicherung', 'vers.', 'haftpflicht', 'gegner')
+        )
+        hat_mdt_brief = any(
+            'mandant' in d.get('titel', '').lower()
+            for d in dokumente_raw
+        )
+        if hat_vers_brief and not hat_mdt_brief:
+            workflow_luecken.append(
+                "Es gibt ein Schreiben an die Versicherung, aber KEIN Schreiben an den Mandanten! "
+                "Der Mandant wurde noch nicht über die Mandatsübernahme informiert."
+            )
+
         system_prompt = f"""Du bist Loki, der KI-Assistent der Kanzlei AWR24. Du hast VOLLSTÄNDIGEN Zugriff auf folgende Akte:
 
 AKTE-ID (für Tool-Aufrufe): {akte_id}
@@ -1154,6 +1187,8 @@ ERKANNTER FALLTYP: {falltyp}
 WORKFLOW-WISSEN FÜR DIESEN FALLTYP:
 {workflow_kontext if workflow_kontext else "Kein spezifischer Workflow bekannt — allgemeine Unterstützung aktiv. Falls Falltyp unklar: User freundlich fragen welcher Rechtsbereich (Verkehrsunfall, Mietrecht, Arbeitsrecht etc.)."}
 
+{"WORKFLOW-LÜCKEN (WICHTIG — beim nächsten Chat-Aufruf AKTIV ansprechen, auch wenn der User nicht danach fragt):" + chr(10) + chr(10).join(f"- {l}" for l in workflow_luecken) if workflow_luecken else ""}
+
 AKTIVER TAB: {active_tab}
 {_tab_hinweis(active_tab)}
 
@@ -1164,6 +1199,7 @@ WICHTIGE REGELN:
 - Nach Brief-Erstellung (`erstelle_brief`): Speichere SOFORT in ki_memory: Datum + Empfänger + Betreff + die ersten 400 Zeichen des Brieftextes. Beispiel: "[26.03.2026] Erstanschreiben Vers. (Betreff: Schadensregulierung): Hiermit zeigen wir an, dass wir Herrn Kalaycioglu in der obengenannten Angelegenheit mandatiert wurden..."
 - Wenn Falltyp erkannt und NICHT im KI-MEMORY: beim ersten Chat-Aufruf EINMALIG speichern: aktualisiere_ki_memory mit "Falltyp: {falltyp}".
 - Wenn User fragt "Was soll ich als nächstes tun?" oder ähnliches: Antwort aus WORKFLOW-WISSEN oben ableiten und aktuelle Stufe anhand Dokumente/Aufgaben/KI-MEMORY bestimmen.
+- Wenn WORKFLOW-LÜCKEN oben ausgewiesen sind: Weise den User in deiner nächsten Antwort IMMER aktiv darauf hin — freundlich aber klar. Beispiel: "Ich sehe, es gibt ein Schreiben an die Versicherung, aber noch kein Schreiben an den Mandanten. Soll ich das direkt erstellen?"
 - Du hast ALLE Finanzdaten, Dokumente und Aufgaben oben vollständig — nutze sie direkt aus dem Kontext.
 - Frage NIEMALS nach Daten, die bereits im obigen Kontext stehen.
 - GEGENSTANDSWERT für RVG = Summe der Soll-Beträge in den Finanzdaten (oben ausgewiesen). Wenn dieser Wert 0 oder sehr niedrig ist (z.B. nur Kostenpauschale), weise den User darauf hin, dass zuerst die Schadenspositionen (Reparatur, Gutachten etc.) eingetragen werden sollten, bevor RVG sinnvoll berechnet werden kann.
@@ -1390,7 +1426,7 @@ ANDERE AKTIONEN (Aufgabe erstellen, Status ändern):
         except ValueError:
             # Gemini hat keine Text-Antwort (z.B. nur unaufgelöste Function Calls)
             reply_text = "Die Anfrage konnte nicht verarbeitet werden. Bitte formuliere sie anders oder nutze eine der verfügbaren Aktionen."
-        return {"reply": reply_text, "actions_taken": actions_taken}
+        return {"reply": _strip_markdown(reply_text), "actions_taken": actions_taken}
 
 
 # Singleton
