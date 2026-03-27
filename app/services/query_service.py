@@ -1413,13 +1413,35 @@ Wenn der User mehrere Dinge auf einmal verlangt (z.B. "buche alles und erstelle 
 führe ALLE Schritte in einer einzigen Antwort durch — ohne zwischendurch Text zu schreiben:
 
 Beispiel "Buche alle Zahlungen + RVG + Finalschreiben":
-  Schritt A: buche_zahlung für jede offene Zahlungsposition (alle nacheinander)
-  Schritt B: berechne_rvg aufrufen → RVG-Positionen werden automatisch angelegt
-  Schritt C: Brief-Entwurf an Versicherung direkt in den Chat (Schritt 1 des Brief-Ablaufs)
+  Schritt A: get_finanzdaten aufrufen und Positionen prüfen
+  Schritt B: Für jede Position: SOLL mit dem erwarteten Betrag vergleichen.
+             Falls SOLL offensichtlich falsch (z.B. 500€ aber HABEN wäre 999€):
+             Den User SOFORT darauf hinweisen: "Position X hat SOLL=500€ — das stimmt nicht.
+             Soll ich SOLL auf [korrekter Betrag]€ korrigieren?"
+             → Auf Bestätigung warten, dann buche_zahlung mit korrektem soll_betrag UND haben_betrag aufrufen.
+  Schritt C: berechne_rvg aufrufen → RVG-Positionen werden automatisch angelegt
+  Schritt D: Brief-Entwurf mit RVG-Forderung direkt in den Chat (Schritt 1 des Brief-Ablaufs)
   → ERST nach dem Brief-Entwurf stoppen und auf User-Bestätigung warten
 
-NIEMALS nach Schritt A oder B stoppen und auf weitere Anweisungen warten —
+NIEMALS nach Schritt A, B oder C stoppen und auf weitere Anweisungen warten —
 die Kette MUSS bis zum Brief-Entwurf durchlaufen.
+
+INTELLIGENTE BUCHUNGSPRÜFUNG (PFLICHT vor jedem buche_zahlung):
+Du bist ein Assistent, kein blinder Tool-Executor. Bevor du eine Zahlung buchst:
+- Prüfe ob der SOLL-Betrag der Position plausibel ist.
+- Wenn SOLL-Betrag offensichtlich falsch (viel zu niedrig, runde Zahl die nicht zum Fall passt,
+  oder HABEN wäre anders als SOLL): weise den User darauf hin und frage nach Korrektur.
+- `buche_zahlung` hat einen optionalen Parameter `soll_betrag` — nutze ihn wenn SOLL korrigiert werden muss.
+
+FINALSCHREIBEN AN VERSICHERUNG (nach vollständiger Schadensregulierung):
+Ein "Finalschreiben" bedeutet NICHT "Wir bestätigen alles ist bezahlt".
+Es bedeutet: Schaden reguliert + RVG-Forderung noch offen.
+Aufbau:
+  1. Kurze Bestätigung: Schadensregulierung wurde erhalten / die Hauptpositionen sind beglichen.
+  2. RVG-Forderung: "Wir berechnen unsere Rechtsanwaltsgebühren gemäß RVG in Höhe von [X€]
+     und bitten um Überweisung bis [Datum in 14 Tagen]."
+  3. Klagandrohung falls nicht gezahlt.
+NIEMALS schreiben "die Angelegenheit ist abschließend reguliert" wenn RVG noch offen ist.
 """
 
         tools = [
@@ -1546,13 +1568,15 @@ die Kette MUSS bis zum Brief-Entwurf durchlaufen.
                             "Zahlungseingang (Haben-Betrag) gegen eine bestehende Zahlungsposition buchen. "
                             "Nutze dies wenn die Versicherung gezahlt hat und der Betrag im Finanz-Tab eingetragen werden soll. "
                             "Die zahlungsposition_id findest du in den FINANZDATEN des Kontexts (Feld 'id'). "
-                            "Status wird automatisch gesetzt: BEZAHLT wenn haben >= soll, sonst TEILBEZAHLT."
+                            "Status wird automatisch gesetzt: BEZAHLT wenn haben >= soll, sonst TEILBEZAHLT. "
+                            "Falls der SOLL-Betrag der Position falsch ist, kann er gleichzeitig mit soll_betrag korrigiert werden."
                         ),
                         "parameters": {
                             "type": "OBJECT",
                             "properties": {
                                 "zahlungsposition_id": {"type": "INTEGER", "description": "ID der Zahlungsposition aus den FINANZDATEN (Feld 'id')"},
                                 "haben_betrag": {"type": "NUMBER", "description": "Eingegangener Betrag in Euro"},
+                                "soll_betrag": {"type": "NUMBER", "description": "Optional: korrigierter SOLL-Betrag falls der aktuelle SOLL-Wert falsch ist"},
                             },
                             "required": ["zahlungsposition_id", "haben_betrag"]
                         }
