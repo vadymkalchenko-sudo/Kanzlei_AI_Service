@@ -1015,6 +1015,17 @@ class QueryService:
                     )
                     return _safe_json(resp)
 
+                elif tool_name == "buche_zahlung":
+                    resp = await client.post(
+                        f"{self.django_base}/api/ai/actions/buche_zahlung/",
+                        json={
+                            "zahlungsposition_id": args["zahlungsposition_id"],
+                            "haben_betrag": args["haben_betrag"],
+                        },
+                        headers=headers
+                    )
+                    return _safe_json(resp)
+
                 elif tool_name == "aktualisiere_ki_memory":
                     akte_id_mem = args["akte_id"]
                     eintrag = args.get("eintrag", "").strip()
@@ -1118,12 +1129,13 @@ class QueryService:
             gesamt_haben = sum(p.get('haben', 0) for p in finanzdaten_raw)
             fd_lines = []
             for p in finanzdaten_raw:
+                zp_id = p.get('id', '?')
                 cat = p.get('category', '–')
                 beschr = p.get('beschreibung', '–')
                 soll = p.get('soll', 0)
                 haben = p.get('haben', 0)
                 st = p.get('status', '–')
-                fd_lines.append(f"  [{cat}] {beschr}: Forderung={soll:.2f}€, Erhalten={haben:.2f}€, Status={st}")
+                fd_lines.append(f"  [ID:{zp_id}][{cat}] {beschr}: Forderung={soll:.2f}€, Erhalten={haben:.2f}€, Status={st}")
             fd_lines.append(f"  → GESAMT: Forderung={gesamt_soll:.2f}€, Erhalten={gesamt_haben:.2f}€, Noch offen={gesamt_soll - gesamt_haben:.2f}€")
             finanzdaten_text = "\n".join(fd_lines)
         else:
@@ -1416,6 +1428,23 @@ ANDERE AKTIONEN (Aufgabe erstellen, Status ändern):
                                 }
                             },
                             "required": ["akte_id", "positionen"]
+                        }
+                    },
+                    {
+                        "name": "buche_zahlung",
+                        "description": (
+                            "Zahlungseingang (Haben-Betrag) gegen eine bestehende Zahlungsposition buchen. "
+                            "Nutze dies wenn die Versicherung gezahlt hat und der Betrag im Finanz-Tab eingetragen werden soll. "
+                            "Die zahlungsposition_id findest du in den FINANZDATEN des Kontexts (Feld 'id'). "
+                            "Status wird automatisch gesetzt: BEZAHLT wenn haben >= soll, sonst TEILBEZAHLT."
+                        ),
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "zahlungsposition_id": {"type": "INTEGER", "description": "ID der Zahlungsposition aus den FINANZDATEN (Feld 'id')"},
+                                "haben_betrag": {"type": "NUMBER", "description": "Eingegangener Betrag in Euro"},
+                            },
+                            "required": ["zahlungsposition_id", "haben_betrag"]
                         }
                     }
                 ]
