@@ -982,7 +982,6 @@ class QueryService:
                         headers=headers
                     )
                     result = _safe_json(resp)
-                    # AUTO ki_memory: direkt nach erfolgreichem Brief speichern (nicht auf Loki warten)
                     if resp.status_code in (200, 201) and "error" not in result:
                         from datetime import datetime as _now_dt
                         datum_mem = _now_dt.now().strftime("%d.%m.%Y")
@@ -990,6 +989,7 @@ class QueryService:
                         betreff_mem = str(args.get("betreff", ""))
                         auszug = str(args.get("brief_text", ""))[0:400]  # type: ignore[index]
                         eintrag = f"Brief an {empf_label} (Betreff: {betreff_mem}): {auszug}"
+                        # AUTO ki_memory
                         mem_get = await client.get(
                             f"{self.django_base}/api/cases/akten/{args['akte_id']}/ki_memory/",
                             headers=headers
@@ -1002,6 +1002,39 @@ class QueryService:
                             headers=headers
                         )
                         logger.info(f"AUTO ki_memory Brief für Akte {args['akte_id']}: {eintrag[0:80]}")  # type: ignore[index]
+                        # AUTO RAG: Brief als Goldstandard in kanzlei_wissen speichern
+                        brief_text_full = str(args.get("brief_text", ""))
+                        if len(brief_text_full) > 100:
+                            try:
+                                from app.services.rag_store import rag_store  # type: ignore[attr-defined]
+                                betreff_lower = betreff_mem.lower()
+                                if "widerspruch" in betreff_lower:
+                                    brief_typ = "widerspruch"
+                                elif "erstanschreiben" in betreff_lower or "mandat" in betreff_lower:
+                                    brief_typ = "erstanschreiben"
+                                elif "sachstand" in betreff_lower or "info" in betreff_lower:
+                                    brief_typ = "sachstandsinfo"
+                                elif "mahnung" in betreff_lower or "frist" in betreff_lower:
+                                    brief_typ = "mahnung"
+                                else:
+                                    brief_typ = "kanzlei_brief"
+                                import time as _time
+                                chunk_id = f"brief_{args['akte_id']}_{int(_time.time())}"
+                                await rag_store.add_documents(
+                                    documents=[brief_text_full],
+                                    metadatas=[{
+                                        "typ": brief_typ,
+                                        "empfaenger": args.get("empfaenger", "versicherung"),
+                                        "betreff": betreff_mem,
+                                        "akte_id": str(args["akte_id"]),
+                                        "datum": datum_mem,
+                                    }],
+                                    ids=[chunk_id],
+                                    collection_name="kanzlei_wissen"
+                                )
+                                logger.info(f"AUTO RAG: Brief '{betreff_mem}' (Typ: {brief_typ}) in kanzlei_wissen gespeichert.")
+                            except Exception as rag_err:
+                                logger.warning(f"AUTO RAG Brief-Speicherung fehlgeschlagen (nicht kritisch): {rag_err}")
                     return result
 
                 elif tool_name == "erstelle_zahlungspositionen":
@@ -1303,6 +1336,65 @@ Schritt 2 — Speichern nach Bestätigung:
   NIEMALS `erstelle_brief` aufrufen ohne ausdrückliche Bestätigung des Users.
   NIEMALS mehrere Briefe gleichzeitig erstellen oder speichern — immer einen nach dem anderen.
   Beim Doppelpack (Versicherung + Mandant): erst Brief an Versicherung zeigen → User prüft/korrigiert → speichern → DANN Brief an Mandant zeigen → User prüft/korrigiert → speichern.
+
+KANZLEI-BRIEFSTIL — PFLICHT FÜR ALLE SCHREIBEN:
+
+Aufbau eines Kanzlei-Briefs (in dieser Reihenfolge):
+  1. Eröffnung: Bezug auf vorherigen Schriftwechsel / Prüfbericht + Widerspruch oder Ankündigung
+     Beispiel: "Wir widersprechen Ihrer Kürzung vom [Datum] aus folgendem Grund:"
+  2. Begründung: Juristische Argumente — bei mehreren Punkten als nummerierte Abschnitte
+     (1. Argument-Überschrift, 2. Argument-Überschrift...) mit kurzem Fließtext je Punkt.
+  3. Forderung: Konkreter Betrag + Zahlungsfrist
+     Beispiel: "Wir fordern Sie daher auf, den Betrag von [X EUR] bis spätestens [Datum]
+     auf das bekannte Konto zu überweisen."
+  4. Klagandrohung (letzter Satz):
+     "Sollte die Zahlung nicht fristgerecht erfolgen, werden wir ohne weitere Vorankündigung
+     gerichtliche Schritte einleiten, deren Kosten vollumfänglich zu Ihren Lasten gehen."
+
+VERBOTEN in Kanzlei-Briefen:
+  - Überschriften wie "GUTACHTERLICHE STELLUNGNAHME", "Prüfungsmaßstab:", "I. Sachverhalt:",
+    "Zusammenfassung:", "Ergebnis:", "Fazit:" — das ist Gutachter-Sprache, kein Kanzlei-Stil.
+  - Platzhalter im fertigen Brief — IMMER echte Daten aus dem Aktenkontext einsetzen:
+    Statt [Datum] → echtes Datum (z.B. 10.04.2026); statt [Betrag] → echte Zahl aus Finanzdaten.
+  - Wörtliche Übernahmen aus externen Analysen (NotebookLM, ChatGPT etc.).
+  - Akademischer Jargon ("Prüfungsmaßstab", "nach den Grundsätzen der...", "subsumiert").
+
+ERLAUBT und ERWÜNSCHT:
+  - Nummerierte Abschnitte für mehrere juristische Argumente (wie in einem echten Anwaltsbrief).
+  - Klare, direkte Sprache ("Ihre Kürzung ist rechtswidrig." statt "Es könnte sein, dass...").
+  - Rechtsprechungs-Zitate kurz und eingebettet in Fließtext.
+
+NOTEBOOKLM-WORKFLOW — VOLLSTÄNDIGER ABLAUF:
+Dieser Workflow wird täglich genutzt. Du kennst und führst ihn korrekt durch:
+
+Phase 1 — Du generierst den NotebookLM-Prompt:
+  Der User fordert eine juristische Analyse an (z.B. "Erstelle einen NotebookLM-Prompt
+  für den Widerspruch gegen die Sachverständigenkürzung").
+  Du erzeugst einen strukturierten Prompt: Sachverhalt, konkrete Rechtsfragen, Ziel.
+  Du sendest diesen als fertigen Text — der User kopiert ihn in NotebookLM.
+
+Phase 2 — NotebookLM liefert juristische Analyse:
+  NotebookLM antwortet mit einer juristischen Analyse — oft mit akademischen Überschriften
+  ("GUTACHTERLICHE STELLUNGNAHME", nummerierten Abschnitten, Rechtsprechungs-Zitaten).
+  Das ist NbLM-Sprache — keine Kanzlei-Sprache.
+
+Phase 3 — User fügt die Analyse bei dir ein:
+  Wenn der User längeren Text einfügt der aussieht wie eine juristische Analyse
+  (Überschriften wie "Gutachterliche Stellungnahme", rechtliche Prüfungsschritte,
+  formale Nummerierung I./II./1./2.):
+    → ERKENNE: "Das ist die NotebookLM-Analyse — ich soll daraus einen Kanzlei-Brief machen."
+    → EXTRAHIERE: Die juristischen Kernargumente und Rechtsprechungs-Zitate.
+    → SCHREIBE KOMPLETT NEU: Druckfertiger Kanzlei-Brief nach obigem Aufbau.
+    → ERSETZE: Alle Platzhalter mit echten Aktendaten (Beträge aus Finanzdaten, Daten aus Akte).
+    → ÜBERNEHME KEINEN SATZ WÖRTLICH — nur die juristischen Argumente als Grundlage.
+  Das Ergebnis klingt wie ein Brief eines erfahrenen Rechtsanwalts — direkt, präzise,
+  mit konkreter Forderung und Klagandrohung. Nicht wie ein Gutachten.
+
+WENN USER JURISTISCHE ANALYSE ALS BRIEFBASIS EINFÜGT (z.B. aus NotebookLM, ChatGPT etc.):
+- Erkenne die juristischen Kernargumente in der eingefügten Analyse.
+- Schreibe den Brief VOLLSTÄNDIG NEU im Kanzlei-Stil — übernehme KEINEN einzigen Satz wörtlich.
+- Ersetze alle Platzhalter ([Datum], [Betrag], [Name] etc.) mit echten Daten aus dem Aktenkontext.
+- Das Ergebnis muss wie ein von einem Rechtsanwalt verfasstes Schreiben klingen, nicht wie ein Gutachten.
 
 - Wenn der User einen Brief mit RVG-Gebühren anfordert:
   1. Prüfe ob die FINANZDATEN oben bereits RVG-Positionen enthalten.
