@@ -260,7 +260,7 @@ class RAGStore:
         try:
             results = self._akte_collection.get(
                 where={"akte_id": str(akte_id)},
-                include=["documents", "metadatas", "ids"],
+                include=["documents", "metadatas"],
             )
             chunks = []
             docs = results.get("documents") or []
