@@ -1627,6 +1627,7 @@ NIEMALS schreiben "die Angelegenheit ist abschließend reguliert" wenn RVG noch 
             tools=tools,
             system_instruction=system_prompt,
             thinking_config=genai_types.ThinkingConfig(include_thoughts=False),
+            temperature=0,  # Deterministisch — Gemini soll System-Prompt-Regeln strikt folgen
         )
 
         # Gemini aufrufen mit Function Calling
