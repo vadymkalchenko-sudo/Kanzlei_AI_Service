@@ -1581,9 +1581,42 @@ ANDERE AKTIONEN (Aufgabe erstellen, Status ändern):
                 }
             raise
 
+        def _find_fc(resp):
+            """Sucht in ALLEN Parts nach einem Function-Call."""
+            if not resp.candidates:
+                return None
+            for part in (resp.candidates[0].content.parts or []):
+                fc = getattr(part, 'function_call', None)
+                if fc and getattr(fc, 'name', None):
+                    return fc
+            return None
+
         actions_taken = []
-        while response.candidates and response.candidates[0].content.parts and getattr(response.candidates[0].content.parts[0], 'function_call', None):
-            fc = response.candidates[0].content.parts[0].function_call
+        _nudge_done = False
+        while True:
+            fc = _find_fc(response)
+
+            if fc is None:
+                # Einmaliger Retry: Gemini hat Text statt Tool-Call geliefert
+                if not _nudge_done:
+                    _nudge_done = True
+                    contents.append(response.candidates[0].content)  # type: ignore[union-attr]
+                    contents.append(genai_types.Content(
+                        role="user",
+                        parts=[genai_types.Part(text="Führe die Aktionen jetzt sofort durch. Starte direkt mit dem ersten Tool-Call ohne weiteren Text.")]
+                    ))
+                    try:
+                        response = await gemini.client.aio.models.generate_content(
+                            model=gemini.model_name, contents=contents, config=config,
+                        )
+                    except Exception as e:
+                        err_str = str(e)
+                        if "429" in err_str or "ResourceExhausted" in err_str or "quota" in err_str.lower():
+                            return {"reply": "⏳ Gemini API Tageslimit erreicht. Bitte in einigen Minuten erneut versuchen.", "actions_taken": actions_taken}
+                        raise
+                    continue
+                break  # Kein FC nach Retry → fertig
+
             try:
                 fc_args_dict = {k: v for k, v in fc.args.items()}
             except Exception:
@@ -1592,8 +1625,7 @@ ANDERE AKTIONEN (Aufgabe erstellen, Status ändern):
             tool_result = await self._execute_chat_tool(fc.name, fc_args_dict)
             actions_taken.append({"tool": fc.name, "result": tool_result})
 
-            # Tool-Ergebnis zurück an Gemini
-            contents.append(response.candidates[0].content)
+            contents.append(response.candidates[0].content)  # type: ignore[union-attr]
             contents.append(genai_types.Content(
                 role="user",
                 parts=[genai_types.Part(function_response=genai_types.FunctionResponse(
@@ -1603,23 +1635,18 @@ ANDERE AKTIONEN (Aufgabe erstellen, Status ändern):
             ))
             try:
                 response = await gemini.client.aio.models.generate_content(
-                    model=gemini.model_name,
-                    contents=contents,
-                    config=config,
+                    model=gemini.model_name, contents=contents, config=config,
                 )
             except Exception as e:
                 err_str = str(e)
                 if "429" in err_str or "ResourceExhausted" in err_str or "quota" in err_str.lower():
-                    return {
-                        "reply": "⏳ Gemini API Tageslimit erreicht. Bitte in einigen Minuten erneut versuchen.",
-                        "actions_taken": actions_taken
-                    }
+                    return {"reply": "⏳ Gemini API Tageslimit erreicht. Bitte in einigen Minuten erneut versuchen.", "actions_taken": actions_taken}
                 raise
+            _nudge_done = False  # Nach erfolgreichem Tool-Call Retry-Flag zurücksetzen
 
         try:
             reply_text = response.text if response.candidates else "Keine Antwort von KI."
         except ValueError:
-            # Gemini hat keine Text-Antwort (z.B. nur unaufgelöste Function Calls)
             reply_text = "Die Anfrage konnte nicht verarbeitet werden. Bitte formuliere sie anders oder nutze eine der verfügbaren Aktionen."
         return {"reply": _strip_markdown(reply_text), "actions_taken": actions_taken}
 
