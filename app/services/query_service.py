@@ -1406,6 +1406,8 @@ ANDERE AKTIONEN (Aufgabe erstellen, Status ändern):
 - AUFGABE ERSTELLEN: Rufe `erstelle_aufgabe` SOFORT auf wenn der User eine Aufgabe erstellen möchte — kein Bestätigungsschritt notwendig. Falls der User kein Datum nennt, frage zuerst "Bis wann?" und warte auf die Antwort, bevor du das Tool aufrufst.
 - STATUS ÄNDERN: Kündige an und warte auf Bestätigung ("Ja", "Ok", "Mach das" etc.), bevor du `aendere_aktenstatus` aufrufst.
 - WICHTIG: Rufe Tools TATSÄCHLICH auf — antworte NIEMALS nur mit Text "Aufgabe erstellt" oder "Status geändert" ohne den entsprechenden Tool-Aufruf durchzuführen!
+- NIEMALS ankündigen was du tun wirst ("Ich werde jetzt...", "Zuerst werde ich...", "Ich werde nun...") — tue es EINFACH SOFORT. Rufe den ersten Tool-Call direkt auf ohne Vortext.
+- Bei mehreren Schritten (z.B. RVG berechnen → buchen → Brief erstellen): starte SOFORT mit dem ersten Tool-Call, ohne Erklärung was als nächstes kommt.
 """
 
         tools = [
