@@ -53,32 +53,39 @@ class FileExtractor:
         """
         Extrahiert Text aus PDFs — zweistufig:
         1. pypdf (schnell, kostenlos) — für text-basierte PDFs
-        2. Gemini Vision Fallback — wenn pypdf zu wenig liefert (Scan-PDF erkannt)
-           Gemini liest dann die gesamte Seite inklusive eingebetteter Bilder,
-           Tabellen, Stempel und handschriftlicher Notizen.
+        2. Gemini Vision Fallback — wenn pypdf zu wenig liefert ODER leere Seiten
+           findet (gemischtes PDF: Text + Bild-Anhang wie DEKRA-Prüfbericht).
+           Gemini liest dann das komplette PDF inklusive Tabellen, Scans, Stempel.
         """
         try:
             pdf_reader = PdfReader(io.BytesIO(content))
             pages: list[str] = []
+            empty_pages = 0
             for page in pdf_reader.pages:
-                page_text = page.extract_text()
+                page_text = (page.extract_text() or "").strip()
                 if page_text:
                     pages.append(page_text)
+                else:
+                    empty_pages += 1
             text = "\n".join(pages).strip()
         except Exception as e:
             logger.warning(f"pypdf Fehler: {e} — versuche Gemini Vision")
             text = ""
+            empty_pages = 1  # Fehler → Vision erzwingen
 
-        if len(text) >= _PDF_TEXT_MIN_CHARS:
-            return text
+        text_zu_kurz = len(text) < _PDF_TEXT_MIN_CHARS
+        hat_leere_seiten = empty_pages > 0
 
-        # Scan-PDF oder bild-dominiertes Gutachten erkannt → Gemini Vision
-        logger.info(
-            f"PDF-Text zu kurz ({len(text)} Zeichen) — Scan/Bild-PDF erkannt, "
-            f"starte Gemini Vision (liest auch eingebettete Bilder und Tabellen)"
-        )
-        vision_text = FileExtractor._extract_via_gemini_vision(content, "application/pdf")
-        return vision_text if vision_text else text
+        if text_zu_kurz or hat_leere_seiten:
+            grund = (
+                f"Text zu kurz ({len(text)} Zeichen)" if text_zu_kurz
+                else f"{empty_pages} leere Seite(n) — gemischtes PDF (Text + Bild-Anhang)"
+            )
+            logger.info(f"PDF: {grund} — starte Gemini Vision für vollständige Extraktion aller Seiten")
+            vision_text = FileExtractor._extract_via_gemini_vision(content, "application/pdf")
+            return vision_text if vision_text else text
+
+        return text
 
     @staticmethod
     def _extract_docx(content: bytes) -> str:
