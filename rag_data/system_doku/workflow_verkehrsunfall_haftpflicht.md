@@ -59,8 +59,15 @@ Typische Fristen: Keine gesetzliche Frist, aber interne Bearbeitung innerhalb vo
 ki_memory-Schlüssel: "mandat_erfasst_minimaldaten_vollstaendig"
 
 ### Stufe 2: Erstanschreiben Doppelpack — Versicherung UND Mandant (Voraussetzungen: Minimaldaten vollständig)
-Erkennungsmerkmale in der Akte: Vollmacht vorhanden, Unfalldatum und Unfallort bekannt, gegnerische Versicherung bekannt, noch kein Erstanschreiben in der Akte.
-LOKI-TRIGGER: Sobald diese Erkennungsmerkmale zutreffen, sofort vorschlagen: "Alle Angaben für das Erstanschreiben liegen vor. Soll ich mit dem Entwurf an die Versicherung beginnen?"
+Erkennungsmerkmale Stufe 2 GESAMT (alle drei Unterschritte beachten!):
+  2A OFFEN: Vollmacht vorhanden, Unfalldatum + Unfallort bekannt, Versicherung bekannt, KEIN generierter Brief an Versicherung vorhanden → Erstanschreiben Versicherung vorschlagen.
+  2A ERLEDIGT: Generierter Brief mit empfaenger="versicherung" in GENERIERTE BRIEFE vorhanden.
+  2A VERSENDET: Zusätzlich E-Mail-Dokument (Titel beginnt mit "E-Mail:") in DOKUMENTE vorhanden.
+  2B OFFEN: 2A erledigt/versendet, aber KEIN generierter Brief an Mandanten vorhanden → Erstanschreiben Mandant vorschlagen (NÄCHSTER SCHRITT!).
+  2B ERLEDIGT: Generierter Brief mit empfaenger="mandant" vorhanden.
+  2C OFFEN: Beide Briefe vorhanden, aber KEINE Aufgabe/Frist "Antwort Versicherung" → Aufgabe + 14-Tage-Frist erstellen.
+LOKI-TRIGGER für 2A: Sobald Minimaldaten vorhanden und kein Versicherungsbrief existiert: "Alle Angaben für das Erstanschreiben liegen vor. Soll ich mit dem Entwurf an die Versicherung beginnen?"
+LOKI-TRIGGER für 2B: Sobald Versicherungsbrief vorhanden/versendet und kein Mandantenbrief: "Das Erstanschreiben an die Versicherung wurde versendet. Jetzt erstelle ich das Informationsschreiben an die Mandantin."
 Nächste Schritte (ZWINGEND SEQUENZIELL — niemals beide Briefe gleichzeitig erstellen):
 - SCHRITT 2A — Erstanschreiben an Versicherung als Entwurf zeigen (KEIN direktes Speichern):
   Unfallhergang aus Fragebogen schildern, Haftungsübernahme gemäß § 115 VVG, §§ 7, 18 StVG fordern.

@@ -1290,6 +1290,15 @@ DOKUMENT-INHALTE (VOLLSTÄNDIGER Akteninhalt — alle indexierten Dokumente dies
 GENERIERTE BRIEFE (durch Loki erstellte Schreiben — Inhalt vollständig lesbar):
 {gen_docs_text}
 
+VERSAND-STATUS (WICHTIG — lies diese Regeln VOR jeder Handlungsempfehlung):
+- Ein Dokument in "DOKUMENTE IN DER AKTE" mit Titel "E-Mail: ..." bedeutet: dieser Brief wurde bereits per E-Mail VERSENDET.
+  → NIEMALS "Erstanschreiben versenden" empfehlen wenn bereits ein E-Mail-Dokument vorhanden ist.
+- Ein generierter Brief (in GENERIERTE BRIEFE) an "versicherung" = Erstanschreiben Versicherung wurde erstellt (Stufe 2A erledigt).
+- Wenn Erstanschreiben Versicherung erstellt UND E-Mail-Dokument vorhanden → Brief wurde versendet.
+  → Nächster Schritt: Erstanschreiben an MANDANTEN (Stufe 2B) vorschlagen.
+- Wenn BEIDE Briefe vorhanden (Versicherung + Mandant) → Nächster Schritt: Aufgabe "Antwort Versicherung abwarten — Frist 14 Tage" erstellen.
+- Wenn generierter Brief an "mandant" vorhanden → Stufe 2B erledigt.
+
 OFFENE AUFGABEN:
 {aufgaben_text}
 
