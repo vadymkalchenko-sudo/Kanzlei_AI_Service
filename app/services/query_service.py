@@ -1734,6 +1734,10 @@ NIEMALS schreiben "die Angelegenheit ist abschließend reguliert" wenn RVG noch 
             except Exception:
                 fc_args_dict = dict(fc.args)
 
+            # Gemini vergisst manchmal akte_id — aus Kontext auffüllen
+            if "akte_id" not in fc_args_dict or not fc_args_dict.get("akte_id"):
+                fc_args_dict["akte_id"] = akte_id
+
             tool_result = await self._execute_chat_tool(fc.name, fc_args_dict)
             actions_taken.append({"tool": fc.name, "result": tool_result})
 
